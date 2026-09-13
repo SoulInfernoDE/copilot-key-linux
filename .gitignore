@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Intermediate files of the sound generator
+sounds/*.wav
+
+# Editor and system leftovers
+*~
+.DS_Store
+.idea/
+.vscode/

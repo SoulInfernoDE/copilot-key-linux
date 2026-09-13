@@ -1,0 +1,9 @@
+The audio files in this directory are dedicated to the public domain under
+CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/).
+
+They were synthesised from scratch by tools/generate_sounds.py - pure additive
+synthesis with numpy, no samples, no recordings and no third-party audio
+material of any kind. Re-run the generator to reproduce them bit for bit.
+
+You may use, modify and redistribute them for any purpose, with or without
+attribution.
