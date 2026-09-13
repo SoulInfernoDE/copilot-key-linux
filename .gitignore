@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Generierte Zwischendateien der Sound-Erzeugung
+sounds/*.wav
+
+# Ablage der Claude-Desktop-App im Projektordner
+Claude outputs/
+
+# Editor- und Systemreste
+*~
+.DS_Store
+.idea/
+.vscode/

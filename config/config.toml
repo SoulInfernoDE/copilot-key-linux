@@ -1,0 +1,75 @@
+# copilot-key - Konfiguration
+# Wird bei der Installation nach ~/.config/copilot-key/config.toml kopiert.
+# Änderungen wirken sofort beim naechsten Tastendruck - kein Neustart nötig.
+
+[general]
+# Sounds global an/aus.
+sounds = true
+
+# Lautstärke der Cues, 0.0 bis 1.0.
+volume = 0.7
+
+# Zeitfenster für den Doppeldruck in Millisekunden.
+double_press_ms = 450
+
+# Verhalten beim einfachen Druck:
+#   toggle_or_menu : Fenster der primären Aktion togglen, sonst Menü öffnen
+#   toggle         : immer nur togglen (startet die App, falls kein Fenster da)
+#   menu           : immer das Auswahlmenü öffnen
+single_press = "toggle_or_menu"
+
+# Überschrift des Auswahlmenüs.
+menu_title = "Was darf es sein?"
+
+# Menü schließen, sobald es den Fokus verliert (z. B. Klick daneben).
+# Auf false setzen, falls das Menü auf deinem Desktop zu früh verschwindet.
+close_on_focus_loss = true
+
+
+# --- Aktionen ---------------------------------------------------------------
+# Reihenfolge = Reihenfolge im Menü = Zifferntasten 1-9.
+#
+# command kennt vier Platzhalter:
+#   @claude-desktop   sucht eine installierte Claude-Desktop-App,
+#                     fällt sonst auf claude.ai im Browser zurück
+#   @terminal <cmd>   öffnet <cmd> in einem neuen Terminalfenster
+#   @browser <url>    öffnet <url> in der Standardanwendung
+#   @edit-config      öffnet diese Datei im Standardeditor
+# Alles andere wird als normale Kommandozeile ausgefuehrt.
+#
+# window_class : Teil der WM_CLASS des Fensters (für das Toggeln).
+#                Ermitteln mit:  wmctrl -lx
+# primary      : genau eine Aktion sollte primary = true haben - sie wird
+#                beim einfachen Tastendruck getoggelt.
+
+[[actions]]
+id = "claude-desktop"
+label = "Claude Desktop"
+subtitle = "Fenster in den Vordergrund holen oder starten"
+command = "@claude-desktop"
+window_class = "claude"
+primary = true
+
+[[actions]]
+id = "claude-code"
+label = "Claude Code"
+subtitle = "Neues Terminal mit laufender Claude-Code-Sitzung"
+command = "@terminal claude"
+window_class = ""
+primary = false
+
+[[actions]]
+id = "claude-web"
+label = "claude.ai im Browser"
+subtitle = "Weboberfläche in der Standardanwendung öffnen"
+command = "@browser https://claude.ai"
+window_class = ""
+primary = false
+
+[[actions]]
+id = "settings"
+label = "Konfiguration"
+subtitle = "config.toml im Standardeditor öffnen"
+command = "@edit-config"
+window_class = ""
+primary = false
