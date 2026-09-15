@@ -18,6 +18,9 @@ drawings — no icon theme, no third-party artwork.
 
 ![Radial menu](docs/menu.png)
 
+Everything the program says follows your locale: German on a German system,
+English everywhere else (see [Language](#language)).
+
 Built for Linux Mint 22.3 (Cinnamon, X11, Ubuntu 24.04 base). The menu is
 verified against GTK 3; the key chain should be confirmed once on the target
 machine with `detect-key.sh`.
@@ -150,6 +153,27 @@ missing (`sudo apt install python3-gi-cairo`).
 
 ---
 
+## Language
+
+Menu texts, script output and the installed configuration template follow
+`$LC_ALL`, `$LC_MESSAGES` or `$LANG`. German is translated; everything else
+falls back to English. To force a language:
+
+```bash
+COPILOT_KEY_LANG=en ~/.local/bin/copilot-key menu
+```
+
+Adding one is small: add a dict with the same keys to `STRINGS` in
+`bin/copilot-key`, add a `T_<CODE>` array plus a case branch in `lib/i18n.sh`,
+and optionally a `config/config.<code>.toml` with translated labels. Missing
+keys fall back to English, so a partial translation works too. Pull requests
+are welcome.
+
+The menu labels themselves come from your own config file, so you can rename
+them to anything you like regardless of locale.
+
+---
+
 ## Sounds
 
 Six cues from one sound family — soft glass bells on a pentatonic scale over D,
@@ -205,7 +229,9 @@ overlay simply covers the screen opaquely.
 ```
 bin/copilot-key          launcher: toggle logic, menu, cue playback
 bin/copilot-sound        cue playback (paplay / pw-play / ffplay / mpv / aplay)
-config/config.toml       template for the user configuration
+lib/i18n.sh              string catalogue for the shell scripts
+config/config.toml       configuration template (English)
+config/config.de.toml    configuration template (German)
 config/keyd-copilot.conf keyd rule for the Copilot chord
 sounds/                  six CC0 cues
 tools/generate_sounds.py sound generator

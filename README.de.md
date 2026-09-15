@@ -19,6 +19,9 @@ Icon-Theme, keine fremden Grafiken.
 
 ![Auswahlmenü](docs/menu.png)
 
+Alles, was das Programm ausgibt, richtet sich nach deiner Locale: Deutsch auf
+einem deutschen System, sonst Englisch (siehe [Sprache](#sprache)).
+
 Entwickelt für Linux Mint 22.3 (Cinnamon, X11, Ubuntu-24.04-Basis); das Menü
 ist unter GTK 3 gegengeprüft, die Tastenkette muss auf der Zielmaschine einmal
 mit `detect-key.sh` bestätigt werden.
@@ -150,6 +153,27 @@ Erscheint statt des runden Menüs eine schlichte Liste, fehlt
 
 ---
 
+## Sprache
+
+Menütexte, Skriptausgaben und die installierte Konfigurationsvorlage folgen
+`$LC_ALL`, `$LC_MESSAGES` bzw. `$LANG`. Übersetzt ist Deutsch; alles andere
+fällt auf Englisch zurück. Erzwingen lässt sich eine Sprache so:
+
+```bash
+COPILOT_KEY_LANG=en ~/.local/bin/copilot-key menu
+```
+
+Eine weitere Sprache ist schnell ergänzt: in `bin/copilot-key` ein Dict mit
+denselben Schlüsseln zu `STRINGS` hinzufügen, in `lib/i18n.sh` ein
+`T_<CODE>`-Array samt Zweig in `copilot_lang`, optional eine
+`config/config.<code>.toml` mit übersetzten Beschriftungen. Fehlende Schlüssel
+fallen einzeln auf Englisch zurück, eine Teilübersetzung genügt also.
+
+Die Menübeschriftungen selbst stammen aus deiner eigenen Konfigurationsdatei –
+die kannst du unabhängig von der Locale frei benennen.
+
+---
+
 ## Sounds
 
 Sechs Cues, alle aus derselben Klangfamilie – weiche Glasglocken auf einer
@@ -204,8 +228,10 @@ Compositor deckt das Overlay den Bildschirm vollflächig ab.
 
 ```
 bin/copilot-key          Launcher: Toggle-Logik, Menü, Sound-Auslösung
-bin/copilot-sound        Sound-Wiedergabe (pw-play / paplay / ffplay / aplay)
-config/config.toml       Vorlage der Benutzerkonfiguration
+bin/copilot-sound        Sound-Wiedergabe (paplay / pw-play / ffplay / mpv / aplay)
+lib/i18n.sh              Textkatalog für die Shell-Skripte
+config/config.toml       Konfigurationsvorlage (englisch)
+config/config.de.toml    Konfigurationsvorlage (deutsch)
 config/keyd-copilot.conf keyd-Regel für den Copilot-Akkord
 sounds/                  sechs CC0-Cues
 tools/generate_sounds.py Sound-Generator

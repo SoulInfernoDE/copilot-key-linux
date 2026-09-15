@@ -1,0 +1,87 @@
+# copilot-key - configuration (German labels)
+# Installed instead of config.toml when the locale is German.
+# Copied to ~/.config/copilot-key/config.toml during installation.
+# Changes take effect on the next key press - nothing needs restarting.
+
+[general]
+# Sounds on or off.
+sounds = true
+
+# Cue volume, 0.0 to 1.0.
+volume = 0.7
+
+# Time window for the double press, in milliseconds.
+double_press_ms = 450
+
+# What a single press does:
+#   toggle_or_menu : toggle the primary action's window, open the menu if there is none
+#   toggle         : always toggle (starts the app when no window exists)
+#   menu           : always open the menu
+single_press = "toggle_or_menu"
+
+# Heading of the menu.
+menu_title = "Was darf es sein?"
+
+# Close the menu as soon as it loses focus (e.g. a click next to it).
+# Set to false if the menu disappears too early on your desktop.
+close_on_focus_loss = true
+
+# Menu style: "radial" (overlay wheel) or "list" (plain vertical list).
+menu_style = "radial"
+
+# How far the desktop behind the menu is dimmed, 0.0 to 1.0.
+dim_opacity = 0.62
+
+
+# --- actions ----------------------------------------------------------------
+# Order = order in the menu = number keys 1-9.
+#
+# command understands four placeholders:
+#   @claude-desktop   looks for an installed Claude desktop app,
+#                     falls back to claude.ai in the browser
+#   @terminal <cmd>   runs <cmd> in a new terminal window
+#   @browser <url>    opens <url> in the default application
+#   @edit-config      opens this file in the default editor
+# Anything else runs as an ordinary command line.
+#
+# icon         : window, terminal, globe, gear, chat, folder, power, sparkle
+# window_class : substring of the window's WM_CLASS (used for toggling).
+#                Find yours with:  wmctrl -lx
+# primary      : exactly one action should be primary = true - that is the one
+#                a single key press toggles.
+
+[[actions]]
+id = "claude-desktop"
+label = "Claude Desktop"
+subtitle = "Fenster in den Vordergrund holen oder starten"
+command = "@claude-desktop"
+icon = "window"
+window_class = "claude"
+primary = true
+
+[[actions]]
+id = "claude-code"
+label = "Claude Code"
+subtitle = "Neues Terminal mit laufender Claude-Code-Sitzung"
+command = "@terminal claude"
+icon = "terminal"
+window_class = ""
+primary = false
+
+[[actions]]
+id = "claude-web"
+label = "claude.ai im Browser"
+subtitle = "Weboberfläche in der Standardanwendung öffnen"
+command = "@browser https://claude.ai"
+icon = "globe"
+window_class = ""
+primary = false
+
+[[actions]]
+id = "settings"
+label = "Konfiguration"
+subtitle = "config.toml im Standardeditor öffnen"
+command = "@edit-config"
+icon = "gear"
+window_class = ""
+primary = false

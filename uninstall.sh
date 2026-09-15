@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# shellcheck source=lib/i18n.sh
+. "$SRC/lib/i18n.sh"
+
 BIN_DIR="$HOME/.local/bin"
 DATA_DIR="$HOME/.local/share/copilot-key"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/copilot-key"
@@ -13,25 +17,25 @@ SHORTCUT_NAME="Copilot key"
 info() { printf '\033[1;36m==\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ok\033[0m %s\n' "$*"; }
 
-info "Launcher entfernen"
+info "$(t uninstall_launcher)"
 rm -f "$BIN_DIR/copilot-key" "$BIN_DIR/copilot-sound"
 rm -rf "$DATA_DIR"
-ok "Programmdateien und Sounds entfernt"
+ok "$(t uninstall_files_gone)"
 
-read -rp "Konfiguration $CONF_DIR ebenfalls löschen? [j/N] " answer
+read -rp "$(t uninstall_config_ask "$CONF_DIR")" answer
 case "${answer:-N}" in
-    [jJyY]*) rm -rf "$CONF_DIR"; ok "Konfiguration entfernt" ;;
-    *) ok "Konfiguration bleibt erhalten" ;;
+    [jJyY]*) rm -rf "$CONF_DIR"; ok "$(t uninstall_config_gone)" ;;
+    *) ok "$(t uninstall_config_kept)" ;;
 esac
 
-info "keyd-Konfiguration entfernen"
+info "$(t uninstall_keyd)"
 if [ -f "$KEYD_CONF" ]; then
     sudo rm -f "$KEYD_CONF"
     sudo systemctl restart keyd || true
-    ok "$KEYD_CONF entfernt, keyd neu gestartet"
+    ok "$(t uninstall_keyd_gone "$KEYD_CONF")"
 fi
 
-info "Tastenkürzel entfernen"
+info "$(t uninstall_shortcut)"
 base="org.cinnamon.desktop.keybindings"
 path_base="/org/cinnamon/desktop/keybindings/custom-keybindings"
 if command -v gsettings >/dev/null 2>&1 && gsettings list-schemas 2>/dev/null | grep -q "^$base\$"; then
@@ -57,7 +61,7 @@ PY
             for key in name command binding; do
                 gsettings reset "$schema" "$key" 2>/dev/null || true
             done
-            ok "Kürzel-Slot custom$i freigegeben"
+            ok "$(t uninstall_slot_freed "custom$i")"
             break
         fi
         i=$((i + 1))
@@ -65,4 +69,4 @@ PY
 fi
 
 echo
-info "Deinstallation abgeschlossen."
+info "$(t uninstall_done)"

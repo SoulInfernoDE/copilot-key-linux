@@ -4,10 +4,15 @@
 # Installs the launcher into ~/.local, sets up keyd for the Copilot key and
 # registers the desktop shortcut. Run as your normal user - it calls sudo where
 # root is actually required.
+#
+# Messages follow your locale (see lib/i18n.sh); COPILOT_KEY_LANG overrides it.
 
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# shellcheck source=lib/i18n.sh
+. "$SRC/lib/i18n.sh"
+
 BIN_DIR="$HOME/.local/bin"
 DATA_DIR="$HOME/.local/share/copilot-key"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/copilot-key"
@@ -20,10 +25,10 @@ ok()    { printf '\033[1;32m ok\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m  !\033[0m %s\n' "$*"; }
 die()   { printf '\033[1;31m  x\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -ne 0 ] || die "Bitte NICHT mit sudo starten - das Skript fragt selbst nach."
+[ "$(id -u)" -ne 0 ] || die "$(t no_sudo)"
 
 # --- 1. dependencies --------------------------------------------------------
-info "Abhängigkeiten prüfen"
+info "$(t deps_check)"
 missing=()
 need_pkg() { command -v "$1" >/dev/null 2>&1 || missing+=("$2"); }
 need_pkg wmctrl wmctrl
@@ -33,29 +38,29 @@ python3 -c 'import gi, cairo; gi.require_foreign("cairo")' 2>/dev/null || missin
 command -v paplay >/dev/null 2>&1 || command -v pw-play >/dev/null 2>&1 || missing+=(pulseaudio-utils)
 
 if [ ${#missing[@]} -gt 0 ]; then
-    warn "Fehlende Pakete: ${missing[*]}"
-    read -rp "   Jetzt mit apt installieren? [J/n] " answer
-    case "${answer:-J}" in
-        [nN]*) warn "Übersprungen - manuell nachinstallieren." ;;
+    warn "$(t deps_missing "${missing[*]}")"
+    read -rp "$(t deps_ask)" answer
+    case "${answer:-Y}" in
+        [nN]*) warn "$(t deps_skipped)" ;;
         *) sudo apt update && sudo apt install -y "${missing[@]}" ;;
     esac
 else
-    ok "Alle Laufzeit-Abhängigkeiten vorhanden"
+    ok "$(t deps_ok)"
 fi
 
 # --- 2. keyd ----------------------------------------------------------------
 if command -v keyd >/dev/null 2>&1; then
-    ok "keyd ist installiert ($(keyd --version 2>/dev/null | head -1))"
+    ok "$(t keyd_installed "$(keyd --version 2>/dev/null | head -1)")"
 else
-    info "keyd installieren"
+    info "$(t keyd_install)"
     # Language-independent check: does any configured source ship keyd?
     if apt-cache show keyd >/dev/null 2>&1; then
         sudo apt install -y keyd
     else
-        warn "Kein keyd-Paket in den Quellen - baue aus dem Quellcode."
-        read -rp "   keyd nach ~/Downloads/keyd bauen und nach /usr/local installieren? [J/n] " answer
-        case "${answer:-J}" in
-            [nN]*) die "keyd wird benötigt. Abbruch." ;;
+        warn "$(t keyd_no_package)"
+        read -rp "$(t keyd_build_ask)" answer
+        case "${answer:-Y}" in
+            [nN]*) die "$(t keyd_required)" ;;
         esac
         command -v git >/dev/null 2>&1 || sudo apt install -y git build-essential
         build_dir="$HOME/Downloads/keyd"
@@ -71,41 +76,45 @@ else
 fi
 
 # --- 3. files ---------------------------------------------------------------
-info "Dateien installieren"
+info "$(t files_install)"
 mkdir -p "$BIN_DIR" "$DATA_DIR/sounds" "$CONF_DIR"
 install -m 755 "$SRC/bin/copilot-key"   "$BIN_DIR/copilot-key"
 install -m 755 "$SRC/bin/copilot-sound" "$BIN_DIR/copilot-sound"
 install -m 644 "$SRC"/sounds/*.ogg "$DATA_DIR/sounds/" 2>/dev/null \
     || install -m 644 "$SRC"/sounds/*.wav "$DATA_DIR/sounds/"
-ok "Launcher: $BIN_DIR/copilot-key"
-ok "Sounds:   $DATA_DIR/sounds"
+ok "$(t files_launcher "$BIN_DIR/copilot-key")"
+ok "$(t files_sounds "$DATA_DIR/sounds")"
+
+# The shipped config template follows the same language as the messages.
+config_template="$SRC/config/config.toml"
+[ "$COPILOT_LANG" = "de" ] && [ -f "$SRC/config/config.de.toml" ] && config_template="$SRC/config/config.de.toml"
 
 if [ -f "$CONF_DIR/config.toml" ]; then
-    ok "Bestehende Konfiguration bleibt unverändert: $CONF_DIR/config.toml"
+    ok "$(t files_config_kept "$CONF_DIR/config.toml")"
 else
-    install -m 644 "$SRC/config/config.toml" "$CONF_DIR/config.toml"
-    ok "Konfiguration angelegt: $CONF_DIR/config.toml"
+    install -m 644 "$config_template" "$CONF_DIR/config.toml"
+    ok "$(t files_config_new "$CONF_DIR/config.toml")"
 fi
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
-    *) warn "$BIN_DIR liegt nicht im PATH - fuer den Shortcut egal, fürs Terminal nicht." ;;
+    *) warn "$(t path_warning "$BIN_DIR")" ;;
 esac
 
 # --- 4. keyd configuration --------------------------------------------------
-info "keyd konfigurieren"
+info "$(t keyd_configure)"
 sudo mkdir -p /etc/keyd
 sudo install -m 644 "$SRC/config/keyd-copilot.conf" "$KEYD_CONF"
 sudo systemctl enable keyd >/dev/null 2>&1 || true
 sudo systemctl restart keyd
 if systemctl is-active --quiet keyd; then
-    ok "keyd läuft, Konfiguration: $KEYD_CONF"
+    ok "$(t keyd_running "$KEYD_CONF")"
 else
-    warn "keyd läuft nicht - prüfen mit: systemctl status keyd"
+    warn "$(t keyd_not_running)"
 fi
 
 # --- 5. desktop shortcut ----------------------------------------------------
-info "Tastenkürzel registrieren ($SHORTCUT)"
+info "$(t shortcut_register "$SHORTCUT")"
 register_cinnamon() {
     local base="org.cinnamon.desktop.keybindings"
     local path_base="/org/cinnamon/desktop/keybindings/custom-keybindings"
@@ -157,22 +166,22 @@ register_cinnamon() {
 
 if command -v gsettings >/dev/null 2>&1 && gsettings list-schemas 2>/dev/null | grep -q '^org.cinnamon.desktop.keybindings$'; then
     if register_cinnamon; then
-        ok "Cinnamon-Tastenkürzel eingetragen"
+        ok "$(t shortcut_done)"
     else
-        warn "Kein freier Kürzel-Slot gefunden - bitte manuell anlegen."
+        warn "$(t shortcut_no_slot)"
     fi
 else
-    warn "Kein Cinnamon erkannt. Bitte manuell ein Tastenkürzel anlegen:"
-    echo "     Tastenkombination: $SHORTCUT"
-    echo "     Befehl:            $BIN_DIR/copilot-key"
+    warn "$(t shortcut_manual)"
+    echo "$(t shortcut_combo "$SHORTCUT")"
+    echo "$(t shortcut_command "$BIN_DIR/copilot-key")"
 fi
 
 # --- 6. done ----------------------------------------------------------------
 echo
-info "Fertig."
-echo "   Copilot-Taste kurz drücken   -> Fenster togglen bzw. Menü öffnen"
-echo "   Copilot-Taste doppelt drücken -> Auswahlmenü erzwingen"
+info "$(t done)"
+echo "$(t usage_short)"
+echo "$(t usage_double)"
 echo
-echo "   Sounds testen:  $BIN_DIR/copilot-key test-sounds"
-echo "   Menü testen:   $BIN_DIR/copilot-key menu"
-echo "   Taste prüfen:  $SRC/detect-key.sh"
+echo "$(t test_sounds "$BIN_DIR/copilot-key")"
+echo "$(t test_menu "$BIN_DIR/copilot-key")"
+echo "$(t test_key "$SRC/detect-key.sh")"
