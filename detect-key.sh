@@ -6,34 +6,38 @@
 
 set -u
 
+SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# shellcheck source=lib/i18n.sh
+. "$SRC/lib/i18n.sh"
+
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 
-bold "Copilot-Tasten-Detektor"
+bold "$(t detect_title)"
 echo
 
 if command -v keyd >/dev/null 2>&1; then
-    echo "Methode: keyd monitor (genauester Weg – zeigt exakt die keyd-Namen)"
-    echo "Jetzt die Copilot-Taste drücken. Beenden mit Ctrl+C."
+    echo "$(t detect_keyd)"
+    echo "$(t detect_keyd_hint)"
     echo
     exec sudo keyd monitor
 fi
 
 if command -v evtest >/dev/null 2>&1; then
-    echo "keyd ist nicht installiert - weiche auf evtest aus."
-    echo "Gerät wählen (meist 'AT Translated Set 2 keyboard'), dann die Taste drücken."
+    echo "$(t detect_evtest)"
+    echo "$(t detect_evtest_hint)"
     echo
     exec sudo evtest
 fi
 
 if command -v xev >/dev/null 2>&1 && [ -n "${DISPLAY:-}" ]; then
-    echo "Weder keyd noch evtest gefunden - weiche auf xev aus."
-    echo "Im erscheinenden Fenster die Copilot-Taste drücken."
-    echo "Hinweis: xev zeigt nur, was X11 erreicht - der Modifier-Teil kann fehlen."
+    echo "$(t detect_xev)"
+    echo "$(t detect_xev_hint)"
+    echo "$(t detect_xev_note)"
     echo
     exec xev -event keyboard
 fi
 
-echo "Kein Analyse-Werkzeug gefunden. Bitte installieren:" >&2
-echo "  sudo apt install keyd     # empfohlen, oder" >&2
+echo "$(t detect_none)" >&2
+echo "  sudo apt install keyd     # recommended, or" >&2
 echo "  sudo apt install evtest x11-utils" >&2
 exit 1

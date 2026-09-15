@@ -49,6 +49,85 @@ def sound_dir() -> Path:
     return PROJECT_DIR / "sounds"
 
 
+# ------------------------------------------------------------ languages ----
+
+# All user-visible text lives here, English first. To add a language, add one
+# more dict with the same keys; any key it omits falls back to English.
+STRINGS = {
+    "en": {
+        "menu_title": "What would you like?",
+        "menu_title_fallback": "Choose an action",
+        "hint_radial": "1\u20139 select  \u00b7  \u2190/\u2192 rotate  \u00b7  Enter confirm  \u00b7  Esc close",
+        "hint_list": "1\u20139 select  \u00b7  Enter confirm  \u00b7  Esc close",
+        "action_desktop_label": "Claude Desktop",
+        "action_desktop_subtitle": "Bring the window to the front, or start it",
+        "action_code_label": "Claude Code",
+        "action_code_subtitle": "New terminal running a Claude Code session",
+        "action_web_label": "claude.ai in the browser",
+        "action_web_subtitle": "Open the web interface in the default application",
+        "action_settings_label": "Configuration",
+        "action_settings_subtitle": "Open config.toml in the default editor",
+        "warn_no_cairo": "python3-gi-cairo is missing - falling back to the list menu "
+                         "(sudo apt install python3-gi-cairo)",
+        "warn_no_terminal": "no terminal emulator found",
+        "warn_no_xdg_open": "xdg-open not found",
+        "warn_no_desktop_app": "no Claude desktop app found - opening claude.ai instead",
+        "warn_launch_failed": "launch failed: {error}",
+        "warn_cue_failed": "cue {cue} failed: {error}",
+        "warn_config_error": "config error in {path}: {error} - using built-in defaults",
+        "warn_no_tomllib": "tomllib unavailable (needs Python 3.11+) - using built-in defaults",
+        "usage": "usage: copilot-key [auto|menu|toggle|test-sounds]",
+    },
+    "de": {
+        "menu_title": "Was darf es sein?",
+        "menu_title_fallback": "Aktion w\u00e4hlen",
+        "hint_radial": "1\u20139 w\u00e4hlen  \u00b7  \u2190/\u2192 drehen  \u00b7  Enter best\u00e4tigen  \u00b7  Esc schlie\u00dfen",
+        "hint_list": "1\u20139 w\u00e4hlen  \u00b7  Enter best\u00e4tigen  \u00b7  Esc schlie\u00dfen",
+        "action_desktop_label": "Claude Desktop",
+        "action_desktop_subtitle": "Fenster in den Vordergrund holen oder starten",
+        "action_code_label": "Claude Code",
+        "action_code_subtitle": "Neues Terminal mit laufender Claude-Code-Sitzung",
+        "action_web_label": "claude.ai im Browser",
+        "action_web_subtitle": "Weboberfl\u00e4che in der Standardanwendung \u00f6ffnen",
+        "action_settings_label": "Konfiguration",
+        "action_settings_subtitle": "config.toml im Standardeditor \u00f6ffnen",
+        "warn_no_cairo": "python3-gi-cairo fehlt - verwende das Listenmen\u00fc "
+                         "(sudo apt install python3-gi-cairo)",
+        "warn_no_terminal": "kein Terminal-Emulator gefunden",
+        "warn_no_xdg_open": "xdg-open nicht gefunden",
+        "warn_no_desktop_app": "keine Claude-Desktop-App gefunden - \u00f6ffne stattdessen claude.ai",
+        "warn_launch_failed": "Start fehlgeschlagen: {error}",
+        "warn_cue_failed": "Sound {cue} fehlgeschlagen: {error}",
+        "warn_config_error": "Fehler in {path}: {error} - verwende die eingebauten Vorgaben",
+        "warn_no_tomllib": "tomllib nicht verf\u00fcgbar (braucht Python 3.11+) - "
+                           "verwende die eingebauten Vorgaben",
+        "usage": "Aufruf: copilot-key [auto|menu|toggle|test-sounds]",
+    },
+}
+
+
+def language() -> str:
+    """UI language from the environment; English whenever there is no match."""
+    override = os.environ.get("COPILOT_KEY_LANG", "")
+    if override[:2].lower() in STRINGS:
+        return override[:2].lower()
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(var)
+        if not value:
+            continue
+        code = value.split(".")[0].split("_")[0].lower()
+        return code if code in STRINGS else "en"
+    return "en"
+
+
+LANG = language()
+
+
+def tr(key: str, **fields) -> str:
+    text = STRINGS.get(LANG, {}).get(key) or STRINGS["en"][key]
+    return text.format(**fields) if fields else text
+
+
 # --------------------------------------------------------------- config ----
 
 DEFAULT_CONFIG = {
@@ -57,7 +136,7 @@ DEFAULT_CONFIG = {
         "volume": 0.7,
         "double_press_ms": 450,
         "single_press": "toggle_or_menu",  # toggle_or_menu | menu | toggle
-        "menu_title": "Was darf es sein?",
+        "menu_title": tr("menu_title"),
         "close_on_focus_loss": True,
         "menu_style": "radial",       # radial | list
         "dim_opacity": 0.62,          # how far the desktop behind is dimmed
@@ -65,8 +144,8 @@ DEFAULT_CONFIG = {
     "actions": [
         {
             "id": "claude-desktop",
-            "label": "Claude Desktop",
-            "subtitle": "Fenster in den Vordergrund holen oder starten",
+            "label": tr("action_desktop_label"),
+            "subtitle": tr("action_desktop_subtitle"),
             "command": "@claude-desktop",
             "icon": "window",
             "window_class": "claude",
@@ -74,8 +153,8 @@ DEFAULT_CONFIG = {
         },
         {
             "id": "claude-code",
-            "label": "Claude Code",
-            "subtitle": "Neues Terminal mit laufender Claude-Code-Sitzung",
+            "label": tr("action_code_label"),
+            "subtitle": tr("action_code_subtitle"),
             "command": "@terminal claude",
             "icon": "terminal",
             "window_class": "",
@@ -83,8 +162,8 @@ DEFAULT_CONFIG = {
         },
         {
             "id": "claude-web",
-            "label": "claude.ai im Browser",
-            "subtitle": "Weboberfläche in der Standardanwendung öffnen",
+            "label": tr("action_web_label"),
+            "subtitle": tr("action_web_subtitle"),
             "command": "@browser https://claude.ai",
             "icon": "globe",
             "window_class": "",
@@ -92,8 +171,8 @@ DEFAULT_CONFIG = {
         },
         {
             "id": "settings",
-            "label": "Konfiguration",
-            "subtitle": "config.toml im Standardeditor öffnen",
+            "label": tr("action_settings_label"),
+            "subtitle": tr("action_settings_subtitle"),
             "command": "@edit-config",
             "icon": "gear",
             "window_class": "",
@@ -111,13 +190,13 @@ def load_config() -> dict:
     try:
         import tomllib
     except ModuleNotFoundError:  # Python < 3.11
-        warn("tomllib unavailable (needs Python 3.11+) - using built-in defaults")
+        warn(tr("warn_no_tomllib"))
         return cfg
     try:
         with path.open("rb") as fh:
             user = tomllib.load(fh)
     except Exception as exc:  # a broken config must never break the key
-        warn(f"config error in {path}: {exc} - using built-in defaults")
+        warn(tr("warn_config_error", path=path, error=exc))
         return cfg
     cfg["general"].update(user.get("general", {}))
     if user.get("actions"):
@@ -150,7 +229,7 @@ class Sound:
                 start_new_session=True,
             )
         except OSError as exc:
-            warn(f"cue {cue!r} failed: {exc}")
+            warn(tr("warn_cue_failed", cue=cue, error=exc))
 
 
 # --------------------------------------------------------------- windows ---
@@ -231,14 +310,14 @@ def resolve(command: str) -> list[str] | None:
             if have(term):
                 # Keep the terminal open after the program exits.
                 return [term, *flag, "bash", "-lc", f"{inner}; exec bash"]
-        warn("no terminal emulator found")
+        warn(tr("warn_no_terminal"))
         return None
 
     if command.startswith("@browser "):
         url = command[len("@browser "):].strip()
         if have("xdg-open"):
             return ["xdg-open", url]
-        warn("xdg-open not found")
+        warn(tr("warn_no_xdg_open"))
         return None
 
     if command == "@claude-desktop":
@@ -247,7 +326,7 @@ def resolve(command: str) -> list[str] | None:
                 return [candidate]
         # Fall back to the web app rather than doing nothing at all.
         if have("xdg-open"):
-            warn("no Claude desktop app found - opening claude.ai instead")
+            warn(tr("warn_no_desktop_app"))
             return ["xdg-open", "https://claude.ai"]
         return None
 
@@ -286,7 +365,7 @@ def launch_resolved(action: dict, sound: Sound) -> None:
         subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     except OSError as exc:
-        warn(f"launch failed: {exc}")
+        warn(tr("warn_launch_failed", error=exc))
         sound.play("error")
 
 
@@ -507,8 +586,7 @@ def show_menu(cfg: dict, sound: "Sound") -> None:
     """Radial overlay menu. Falls back to a plain list on request."""
     style = str(cfg["general"].get("menu_style", "radial")).lower()
     if style != "list" and not cairo_available():
-        warn("python3-gi-cairo fehlt - verwende das Listenmenü "
-             "(sudo apt install python3-gi-cairo)")
+        warn(tr("warn_no_cairo"))
         style = "list"
     if style == "list":
         show_list_menu(cfg, sound)
@@ -534,7 +612,7 @@ def show_radial_menu(cfg: dict, sound: "Sound") -> None:
 
     general = cfg["general"]
     dim = float(general.get("dim_opacity", 0.62))
-    title_text = str(general.get("menu_title", "Aktion wählen"))
+    title_text = str(general.get("menu_title", tr("menu_title_fallback")))
 
     pidfile = runtime_dir() / "menu.pid"
     pidfile.write_text(f"{os.getpid()}\n")
@@ -542,10 +620,10 @@ def show_radial_menu(cfg: dict, sound: "Sound") -> None:
 
     # --- window: one borderless fullscreen surface on the pointer's monitor --
     win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-    # A stable title and class help window managers (and scripted tests)
-    # identify the overlay.
+    # A stable title helps window managers (and scripted tests) identify the
+    # overlay. set_wmclass() would too, but it is deprecated in GTK 3 and GTK
+    # derives WM_CLASS from the program name anyway.
     win.set_title("copilot-key")
-    win.set_wmclass("copilot-key", "copilot-key")
     win.set_decorated(False)
     win.set_keep_above(True)
     win.set_skip_taskbar_hint(True)
@@ -773,7 +851,7 @@ def show_radial_menu(cfg: dict, sound: "Sound") -> None:
             if subtitle:
                 draw_centered(cr, subtitle, cx, cy + radius + button + 74, 13.0, False,
                               (*TEXT_BRIGHT, 0.78 * fade_in), max_width=620)
-        draw_centered(cr, "1–9 wählen  ·  ←/→ drehen  ·  Enter bestätigen  ·  Esc schließen",
+        draw_centered(cr, tr("hint_radial"),
                       cx, cy + radius + button + 104, 11.5, False,
                       (*TEXT_DIM, 0.65 * fade_in), max_width=660)
         return False
@@ -958,7 +1036,7 @@ def show_list_menu(cfg: dict, sound: "Sound") -> None:
     outer.set_border_width(16)
     win.add(outer)
 
-    title = Gtk.Label(label=cfg["general"].get("menu_title", "Aktion wählen"), xalign=0.0)
+    title = Gtk.Label(label=cfg["general"].get("menu_title", tr("menu_title_fallback")), xalign=0.0)
     title.get_style_context().add_class("cp-title")
     outer.pack_start(title, False, False, 0)
 
@@ -987,7 +1065,7 @@ def show_list_menu(cfg: dict, sound: "Sound") -> None:
         row.add(line)
         listbox.add(row)
 
-    hint = Gtk.Label(label="1–9 wählen  ·  Enter bestätigen  ·  Esc schließen", xalign=0.0)
+    hint = Gtk.Label(label=tr("hint_list"), xalign=0.0)
     hint.get_style_context().add_class("cp-hint")
     outer.pack_start(hint, False, False, 0)
 
@@ -1085,7 +1163,7 @@ def main(argv: list[str]) -> int:
         return 0
     else:
         print(__doc__)
-        print("usage: copilot-key [auto|menu|toggle|test-sounds]")
+        print(tr("usage"))
         return 2
 
     # An open menu is closed by the next press - the key stays a true toggle.

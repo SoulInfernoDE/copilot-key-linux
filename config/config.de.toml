@@ -1,4 +1,5 @@
-# copilot-key - configuration
+# copilot-key - configuration (German labels)
+# Installed instead of config.toml when the locale is German.
 # Copied to ~/.config/copilot-key/config.toml during installation.
 # Changes take effect on the next key press - nothing needs restarting.
 
@@ -19,7 +20,7 @@ double_press_ms = 450
 single_press = "toggle_or_menu"
 
 # Heading of the menu.
-menu_title = "What would you like?"
+menu_title = "Was darf es sein?"
 
 # Close the menu as soon as it loses focus (e.g. a click next to it).
 # Set to false if the menu disappears too early on your desktop.
@@ -52,7 +53,7 @@ dim_opacity = 0.62
 [[actions]]
 id = "claude-desktop"
 label = "Claude Desktop"
-subtitle = "Bring the window to the front, or start it"
+subtitle = "Fenster in den Vordergrund holen oder starten"
 command = "@claude-desktop"
 icon = "window"
 window_class = "claude"
@@ -61,7 +62,7 @@ primary = true
 [[actions]]
 id = "claude-code"
 label = "Claude Code"
-subtitle = "New terminal running a Claude Code session"
+subtitle = "Neues Terminal mit laufender Claude-Code-Sitzung"
 command = "@terminal claude"
 icon = "terminal"
 window_class = ""
@@ -69,8 +70,8 @@ primary = false
 
 [[actions]]
 id = "claude-web"
-label = "claude.ai in the browser"
-subtitle = "Open the web interface in the default application"
+label = "claude.ai im Browser"
+subtitle = "Weboberfläche in der Standardanwendung öffnen"
 command = "@browser https://claude.ai"
 icon = "globe"
 window_class = ""
@@ -78,8 +79,8 @@ primary = false
 
 [[actions]]
 id = "settings"
-label = "Configuration"
-subtitle = "Open config.toml in the default editor"
+label = "Konfiguration"
+subtitle = "config.toml im Standardeditor öffnen"
 command = "@edit-config"
 icon = "gear"
 window_class = ""
