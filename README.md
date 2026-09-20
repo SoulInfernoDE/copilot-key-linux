@@ -116,7 +116,8 @@ entries. The wheel on the right shows what the menu will look like, and
 Everything under *Advanced* is optional.
 
 Under **Behaviour** sit the sounds, the volume, the double-press window, the
-menu heading, the menu style and whether the editor window follows your
+menu heading, the menu style, whether the buttons carry the applications' own
+icons instead of the drawn ones, and whether the editor window follows your
 desktop's light or dark theme.
 
 ### Or without leaving the wheel
@@ -133,6 +134,9 @@ editor.
   application with `↑`/`↓` and `Enter`, and it lands on the button you clicked
   — which glows until it has one.
 * **+** adds another button, **✕** on a button removes it.
+* The **picture badge** on a button changes its symbol: the same search, now
+  offering the drawn symbols and the icon of every installed application.
+  Clicking the pulsing button itself puts its original icon back.
 * `Esc` leaves the editor, `Esc` again closes the menu.
 
 There is no save button: every change is written the moment you make it.
@@ -254,7 +258,7 @@ has the format, every key and the pitfalls.
 
 ## Sounds
 
-Six cues from one sound family — soft glass bells on a pentatonic scale over D,
+Eight cues from one sound family — soft glass bells on a pentatonic scale over D,
 short, quiet (peak −18 dBFS) and with a gentle attack, so nothing clicks or
 demands attention:
 
@@ -266,6 +270,8 @@ demands attention:
 | `toggle-show` | window comes forward | bright blip with an upward glide |
 | `toggle-hide` | window is minimised | the same blip downwards |
 | `error` | action not available | low two-tone, deliberately not harsh |
+| `drag-lift` | a button is picked up | short upward pluck |
+| `drag-drop` | it settles again | a plop, damped at once |
 
 Listen to them:
 
@@ -316,7 +322,7 @@ config/config.de.toml    configuration template (German, printed by the editor)
 config/keyd-copilot.conf keyd rule for the Copilot chord
 config/copilot-key-config.desktop  start menu entry for the editor
 config/copilot-key-autostart.desktop  per-user setup at login
-sounds/                  six CC0 cues
+sounds/                  eight CC0 cues
 tools/generate_sounds.py sound generator
 detect-key.sh            shows what the key actually sends
 doctor.sh                checks installation, audio chain and shortcut

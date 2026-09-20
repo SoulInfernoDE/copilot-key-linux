@@ -35,6 +35,10 @@ menu_style = "radial"
 # Shipped: terracotta, aurora, mint. Writing your own: docs/skins.md.
 menu_skin = "terracotta"
 
+# Put the applications' own icons on the buttons instead of the drawn ones.
+# A single button can still be told otherwise - see icon_source below.
+use_app_icons = false
+
 # How far the desktop behind the menu is dimmed, 0.0 to 1.0.
 dim_opacity = 0.62
 
@@ -54,7 +58,11 @@ editor_theme = "auto"
 #   @edit-config      opens this file in the default editor
 # Anything else runs as an ordinary command line.
 #
-# icon         : window, terminal, globe, gear, chat, folder, power, sparkle
+# icon         : window, terminal, globe, gear, chat, folder, power, pencil,
+#                sparkle - the symbols the menu draws itself
+# app_icon     : the application's own icon, as the icon theme calls it; the
+#                editor and the wheel's edit mode fill this in
+# icon_source  : "app" or "vector", overruling use_app_icons for this button
 # window_class : substring of the window's WM_CLASS (used for toggling).
 #                Find yours with:  wmctrl -lx
 # primary      : exactly one action should be primary = true - that is the one
