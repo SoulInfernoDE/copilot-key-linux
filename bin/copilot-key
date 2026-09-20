@@ -91,6 +91,24 @@ STRINGS = {
         "tool_config": "Open the editor",
         "tool_edit": "Edit the wheel right here",
         "search_placeholder": "Which application?",
+        "search_icon": "Which symbol?",
+        "hint_icon": "Type to search  \u00b7  Enter takes it  \u00b7  the button itself "
+                     "brings its original icon back  \u00b7  Esc cancels",
+        "use_original_icon": "use the original icon",
+        "icon_builtin": "drawn symbol",
+        "icon_from_app": "icon of this application",
+        "icon_window": "Window",
+        "icon_terminal": "Terminal",
+        "icon_globe": "Globe",
+        "icon_gear": "Gear",
+        "icon_chat": "Speech bubble",
+        "icon_folder": "Folder",
+        "icon_power": "Power",
+        "icon_pencil": "Pencil",
+        "icon_sparkle": "Sparkle",
+        "cfg_gen_app_icons": "Always use the applications' own icons",
+        "cfg_gen_app_icons_hint": "A single button can still be told otherwise, "
+                                  "with the icon badge in the wheel's edit mode.",
         "slot_empty": "not set yet",
         "action_desktop_label": "Claude Desktop",
         "action_desktop_subtitle": "Bring the window to the front, or start it",
@@ -212,6 +230,25 @@ STRINGS = {
         "tool_config": "Editor \u00f6ffnen",
         "tool_edit": "Rad direkt hier bearbeiten",
         "search_placeholder": "Welche Anwendung?",
+        "search_icon": "Welches Symbol?",
+        "hint_icon": "Tippen zum Suchen  \u00b7  Enter \u00fcbernimmt  \u00b7  der Button "
+                     "selbst holt sein Original-Icon zur\u00fcck  \u00b7  Esc bricht ab",
+        "use_original_icon": "Original-Icon verwenden",
+        "icon_builtin": "gezeichnetes Symbol",
+        "icon_from_app": "Icon dieser Anwendung",
+        "icon_window": "Fenster",
+        "icon_terminal": "Terminal",
+        "icon_globe": "Globus",
+        "icon_gear": "Zahnrad",
+        "icon_chat": "Sprechblase",
+        "icon_folder": "Ordner",
+        "icon_power": "Ein/Aus",
+        "icon_pencil": "Stift",
+        "icon_sparkle": "Funke",
+        "cfg_gen_app_icons": "Immer die Original-Icons der Anwendungen verwenden",
+        "cfg_gen_app_icons_hint": "Ein einzelner Button l\u00e4sst sich trotzdem anders "
+                                  "einstellen \u2013 \u00fcber das Icon-Zeichen im "
+                                  "Editiermodus des Rads.",
         "slot_empty": "noch nicht belegt",
         "action_desktop_label": "Claude Desktop",
         "action_desktop_subtitle": "Fenster in den Vordergrund holen oder starten",
@@ -360,6 +397,7 @@ DEFAULT_CONFIG = {
         "close_on_focus_loss": True,
         "menu_style": "radial",       # radial | list
         "menu_skin": "terracotta",    # a file name from skins/, without .toml
+        "use_app_icons": False,       # real application icons instead of drawn ones
         "dim_opacity": 0.62,          # how far the desktop behind is dimmed
         "editor_theme": "auto",       # auto | dark | light
     },
@@ -453,12 +491,16 @@ GENERAL_COMMENTS = [
     ("menu_skin",
      "Skin of the wheel: a file name from skins/, without the .toml.\n"
      "Shipped: terracotta, aurora, mint. Writing your own: docs/skins.md."),
+    ("use_app_icons",
+     "Put the applications' own icons on the buttons instead of the drawn ones.\n"
+     "A single button can still be told otherwise - see icon_source below."),
     ("dim_opacity", "How far the desktop behind the menu is dimmed, 0.0 to 1.0."),
     ("editor_theme",
      'Theme of the editor window: "auto" follows the desktop, or "dark" / "light".'),
 ]
 
-ACTION_KEYS = ["id", "label", "subtitle", "command", "icon", "window_class", "primary"]
+ACTION_KEYS = ["id", "label", "subtitle", "command", "icon", "app_icon",
+               "icon_source", "window_class", "primary"]
 
 ACTIONS_COMMENT = """--- actions ----------------------------------------------------------------
 Order = order in the menu = number keys 1-9.
@@ -472,7 +514,11 @@ command understands five placeholders:
   @edit-config      opens this file in the default editor
 Anything else runs as an ordinary command line.
 
-icon         : window, terminal, globe, gear, chat, folder, power, sparkle
+icon         : window, terminal, globe, gear, chat, folder, power, pencil,
+               sparkle - the symbols the menu draws itself
+app_icon     : the application's own icon, as the icon theme calls it; the
+               editor and the wheel's edit mode fill this in
+icon_source  : "app" or "vector", overruling use_app_icons for this button
 window_class : substring of the window's WM_CLASS (used for toggling).
                Find yours with:  wmctrl -lx
 primary      : exactly one action should be primary = true - that is the one
@@ -757,6 +803,132 @@ def read_apps() -> list[App]:
             ))
     apps.sort(key=lambda app: app.name.lower())
     return apps
+
+
+_apps_cache: "list | None" = None
+_command_icons: dict = {}
+_icon_cache: dict = {}
+
+
+def installed_apps() -> list:
+    """read_apps(), but scanned only once per process."""
+    global _apps_cache
+    if _apps_cache is None:
+        _apps_cache = read_apps()
+    return _apps_cache
+
+
+def resolve_app_icon(command: str) -> str:
+    """The icon name of the desktop entry a command belongs to.
+
+    Entries written by hand carry no icon of their own, so the launcher looks
+    for the application the command actually starts and borrows its icon.
+    """
+    command = str(command or "").strip()
+    if not command or command in ("@claude-desktop", "@configure", "@edit-config"):
+        return ""
+    if command in _command_icons:
+        return _command_icons[command]
+
+    wanted = command
+    if wanted.startswith("@terminal "):
+        wanted = wanted[len("@terminal "):].strip()
+    found = ""
+    if not wanted.startswith("@"):
+        try:
+            head = Path(shlex.split(wanted)[0]).name
+        except (ValueError, IndexError):
+            head = ""
+        if head:
+            for app in installed_apps():
+                try:
+                    candidate = Path(shlex.split(app.command)[0]).name
+                except (ValueError, IndexError):
+                    continue
+                if candidate == head and app.icon_name:
+                    found = app.icon_name
+                    break
+    _command_icons[command] = found
+    return found
+
+
+def themed_icon_for(action: dict, use_app_icons: bool, fallback: str = "") -> str:
+    """Which application icon a button shows - "" means the drawn one.
+
+    icon_source is the per-button answer ("app" or "vector"); without it the
+    setting from [general] decides.
+    """
+    source = str(action.get("icon_source", "")).strip().lower()
+    if source == "vector":
+        return ""
+    if source != "app" and not use_app_icons:
+        return ""
+    return str(action.get("app_icon", "")).strip() or fallback
+
+
+def load_app_icon(name: str, size: int):
+    """One themed icon (or icon file) as a pixbuf, cached per size."""
+    if not name or GdkPixbuf is None:
+        return None
+    key = (name, size)
+    if key in _icon_cache:
+        return _icon_cache[key]
+    pixbuf = None
+    try:
+        if name.startswith("/"):
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(name, size, size)
+        else:
+            pixbuf = Gtk.IconTheme.get_default().load_icon(
+                name, size, Gtk.IconLookupFlags.FORCE_SIZE)
+    except Exception:
+        pixbuf = None
+    _icon_cache[key] = pixbuf
+    return pixbuf
+
+
+def draw_app_icon(cr, name: str, size: float, alpha: float = 1.0) -> bool:
+    """Paint an application icon centred on the origin; False if there is none."""
+    pixbuf = load_app_icon(name, int(max(16, round(size))))
+    if pixbuf is None:
+        return False
+    cr.save()
+    Gdk.cairo_set_source_pixbuf(cr, pixbuf,
+                                -pixbuf.get_width() / 2.0, -pixbuf.get_height() / 2.0)
+    cr.paint_with_alpha(max(0.0, min(1.0, alpha)))
+    cr.restore()
+    return True
+
+
+class Choice:
+    """One row of the icon search: a drawn icon, or an application's own."""
+
+    __slots__ = ("name", "comment", "icon", "icon_name")
+
+    def __init__(self, name: str, comment: str, icon: str, icon_name: str = "") -> None:
+        self.name = name
+        self.comment = comment
+        self.icon = icon
+        self.icon_name = icon_name
+
+
+def icon_choices(query: str, apps: list) -> list:
+    """The drawn icons first, then every application that carries one."""
+    out = []
+    for name in ICON_NAMES:
+        label = tr(f"icon_{name}")
+        if not query or query in name or query in label.lower():
+            out.append(Choice(label, tr("icon_builtin"), name))
+    scored = []
+    for app in apps:
+        if not app.icon_name:
+            continue
+        score = match_score(app, query)
+        if score >= 0:
+            scored.append((score, app.name.lower(), app))
+    scored.sort(key=lambda entry: (entry[0], entry[1]))
+    out += [Choice(entry[2].name, tr("icon_from_app"), entry[2].icon, entry[2].icon_name)
+            for entry in scored]
+    return out
 
 
 def match_score(app: App, query: str) -> int:
@@ -1117,6 +1289,9 @@ def draw_icon(cr, name: str, size: float, rgba) -> None:
     cr.set_line_width(lw)
     cr.set_line_cap(1)   # round
     cr.set_line_join(1)
+    # Whatever drew last - a Pango layout, another icon - may have left the
+    # pen somewhere. Without this every arc below would be joined to it.
+    cr.new_path()
 
     if name == "window":
         w, h = s * 0.86, s * 0.68
@@ -1228,6 +1403,20 @@ def draw_icon(cr, name: str, size: float, rgba) -> None:
         cr.stroke()
         cr.move_to(arm, -arm)
         cr.line_to(-arm, arm)
+        cr.stroke()
+
+    elif name == "image":
+        w, h = s * 0.82, s * 0.66
+        cr.rectangle(-w / 2, -h / 2, w, h)
+        cr.stroke()
+        cr.new_path()
+        cr.arc(-w * 0.18, -h * 0.16, s * 0.08, 0, 2 * math.pi)
+        cr.fill()
+        cr.move_to(-w / 2 + lw, h / 2 - lw)
+        cr.line_to(-w * 0.04, -h * 0.06)
+        cr.line_to(w * 0.16, h * 0.14)
+        cr.line_to(w * 0.34, -h * 0.02)
+        cr.line_to(w / 2 - lw, h / 2 - lw)
         cr.stroke()
 
     elif name == "search":
@@ -1556,11 +1745,11 @@ def show_menu(cfg: dict, sound: "Sound") -> None:
 
 # The GTK bits load on demand: a press that only toggles a window never needs
 # them, and the list menu works without the cairo bridge.
-Gtk = Gdk = GLib = Pango = PangoCairo = cairo = None
+Gtk = Gdk = GdkPixbuf = GLib = Pango = PangoCairo = cairo = None
 
 
 def load_gtk() -> bool:
-    global Gtk, Gdk, GLib, Pango, PangoCairo, cairo
+    global Gtk, Gdk, GdkPixbuf, GLib, Pango, PangoCairo, cairo
     if Gtk is not None:
         return True
     try:
@@ -1570,6 +1759,7 @@ def load_gtk() -> bool:
         gi.require_version("Gdk", "3.0")
         gi.require_version("PangoCairo", "1.0")
         from gi.repository import Gdk as _Gdk
+        from gi.repository import GdkPixbuf as _GdkPixbuf
         from gi.repository import GLib as _GLib
         from gi.repository import Gtk as _Gtk
         from gi.repository import Pango as _Pango
@@ -1581,7 +1771,7 @@ def load_gtk() -> bool:
     except ImportError:
         _cairo = None
     Gtk, Gdk, GLib, Pango, PangoCairo = _Gtk, _Gdk, _GLib, _Pango, _PangoCairo
-    cairo = _cairo
+    GdkPixbuf, cairo = _GdkPixbuf, _cairo
     return True
 
 
@@ -1632,20 +1822,28 @@ class RadialMenu:
 
     Pressing the centre reveals two small tools in the same style: one opens
     the editor window, the other switches the wheel itself into edit mode.
-    There the buttons are dragged around, a placeholder adds another one, and
-    clicking a button asks which application belongs on it - a search bar in
-    the launcher's own style slides in above the wheel while the button being
-    filled pulses. Every committed change is written straight to the
-    configuration; there is no save button to forget.
+    There the buttons are dragged around, a placeholder adds another one, a
+    badge on each button changes its icon, and clicking a button asks which
+    application belongs on it - a search panel slides in above the wheel,
+    which makes room for it, while the button being filled pulses. Every
+    committed change is written straight to the configuration.
+
+    Anything that appears, moves or leaves does so the way the wheel itself
+    unrolls: positions are eased towards their target every frame instead of
+    jumping, and everything new grows into place.
     """
 
     OPEN_TIME = 0.34        # seconds until the wheel is fully unrolled
     ITEM_STAGGER = 0.045    # delay between neighbouring items
     CLOSE_TIME = 0.16
-    TOOL_TIME = 0.18        # the tools unfolding above the centre
-    SEARCH_TIME = 0.22      # the wheel making room for the search bar
+    TOOL_TIME = 0.26        # the tools unfolding above the centre
+    SEARCH_TIME = 0.30      # the panel sliding in, the wheel making room
     DRAG_SLOP = 7.0         # pixels before a press counts as a drag
     MAX_HITS = 5
+
+    PANEL_PAD = 12.0        # inside the search panel
+    PANEL_BOX = 46.0        # the input line
+    PANEL_ROW = 42.0        # one result
 
     def __init__(self, cfg: dict, sound: "Sound") -> None:
         self.cfg = cfg
@@ -1655,23 +1853,28 @@ class RadialMenu:
         self.skin = load_skin(self.general.get("menu_skin", "terracotta"))
         self.dim = float(self.general.get("dim_opacity", 0.62))
         self.title = str(self.general.get("menu_title", tr("menu_title_fallback")))
+        self.use_app_icons = bool(self.general.get("use_app_icons", False))
         self.chosen: dict | None = None
 
         self.start = time.monotonic()
+        self.frame = self.start
         self.closing_at: float | None = None
         self.selected = 0
         self.hover = -1
         self.hover_centre = False
         self.hover_tool = -1
+        self.hover_badge = ""           # "remove" or "icon" under the pointer
 
-        self.tools_at: float | None = None      # when the tools opened
+        self.tools_at: float | None = None
         self.edit = False
+        self.edit_at: float | None = None
         self.drag_index = -1
         self.drag_origin = (0.0, 0.0)
         self.drag_pos: tuple[float, float] | None = None
         self.dragging = False
 
         self.search_slot = -1
+        self.search_mode = "app"        # app | icon
         self.search_at: float | None = None
         self.search_text = ""
         self.search_hits: list = []
@@ -1682,6 +1885,13 @@ class RadialMenu:
         self.press_index = -1
         self.composited = True
         self.area = None
+        self.motion: dict = {}          # what each button is doing right now
+        self.boxes: list = []           # what was drawn where, for hit testing
+        self.resolved: dict = {}        # id(action) -> icon name of its app
+        self.backdrop = None            # the desktop, for the frosted panel
+        self.frost: dict = {}
+        self.hits_at = 0.0
+        self.origin = (0, 0)
 
     # -- time ---------------------------------------------------------------
 
@@ -1704,16 +1914,37 @@ class RadialMenu:
             return 0.0
         return min(1.0, (time.monotonic() - self.tools_at) / self.TOOL_TIME)
 
+    def edit_progress(self) -> float:
+        if not self.edit or self.edit_at is None:
+            return 0.0
+        return min(1.0, (time.monotonic() - self.edit_at) / self.TOOL_TIME)
+
     def search_progress(self) -> float:
         if self.search_at is None:
             return 0.0
         return ease_out_cubic(min(1.0, (time.monotonic() - self.search_at) / self.SEARCH_TIME))
 
     def pulse(self) -> float:
-        """0..1, breathing - the glow of the button waiting for an app."""
+        """0..1, breathing - the glow of the button waiting for an icon or app."""
         import math
 
         return 0.5 + 0.5 * math.sin(time.monotonic() * 4.2)
+
+    def tween(self, key, angle: float, dt: float, appearing: bool):
+        """Ease one button towards where it belongs, instead of teleporting."""
+        import math
+
+        state = self.motion.get(key)
+        if state is None:
+            # During the opening animation everything is already in flight;
+            # anything showing up later grows into place instead.
+            state = {"angle": angle, "scale": 0.25 if appearing else 1.0}
+            self.motion[key] = state
+            return state
+        delta = (angle - state["angle"] + math.pi) % (2 * math.pi) - math.pi
+        state["angle"] += delta * (1.0 - math.exp(-dt * 11.0))
+        state["scale"] += (1.0 - state["scale"]) * (1.0 - math.exp(-dt * 9.0))
+        return state
 
     # -- geometry -----------------------------------------------------------
 
@@ -1721,20 +1952,51 @@ class RadialMenu:
         """Wheel positions: one per action, plus the placeholder in edit mode."""
         return max(1, len(self.actions) + (1 if self.edit else 0))
 
+    def search_panel(self, width: int):
+        """(x, y, width, height) of the whole search panel."""
+        rows = len(self.search_hits[:self.MAX_HITS])
+        height = self.PANEL_PAD * 2 + self.PANEL_BOX
+        if rows:
+            height += 8 + rows * self.PANEL_ROW
+        panel_width = min(660.0, max(400.0, width * 0.48))
+        shown = self.search_progress()
+        return (width - panel_width) / 2.0, 44.0 - 18.0 * (1.0 - shown), panel_width, height
+
     def geometry(self, width: int, height: int):
-        search = self.search_progress()
-        cx, cy = width / 2.0, height / 2.0 + 54.0 * search
-        n = self.slot_count()
+        cx, base_cy = width / 2.0, height / 2.0
+        count = self.slot_count()
         radius = min(min(width, height) * 0.26, 320.0)
-        radius = max(radius, n * 30.0, 170.0)
-        radius = min(radius, min(width, height) * 0.34) * (1.0 - 0.20 * search)
+        radius = max(radius, count * 30.0, 170.0)
+        radius = min(radius, min(width, height) * 0.34)
         button = min(52.0, max(34.0, radius * 0.26))
-        return cx, cy, radius, button, n
+
+        shown = self.search_progress()
+        if shown <= 0.001:
+            return cx, base_cy, radius, button, count
+
+        # The panel never sits on the wheel: the wheel moves below it and
+        # shrinks as far as it has to, both eased by the same progress.
+        _px, py, _pw, ph = self.search_panel(width)
+        top = py + ph + 26.0
+        room = (height - 52.0) - top
+        target_radius = max(90.0, min(radius, room / 2.0 - 44.0))
+        target_button = min(46.0, max(24.0, target_radius * 0.26))
+        target_cy = top + target_button + target_radius
+        return (cx,
+                base_cy + (target_cy - base_cy) * shown,
+                radius + (target_radius - radius) * shown,
+                button + (target_button - button) * shown,
+                count)
+
+    def slot_angle(self, slot: int, count: int) -> float:
+        import math
+
+        return -math.pi / 2 + slot * (2 * math.pi / count)
 
     def slot_center(self, slot: int, cx, cy, radius, n, unroll: float = 1.0):
         import math
 
-        angle = -math.pi / 2 + slot * (2 * math.pi / n) - (1.0 - unroll) * 0.55
+        angle = self.slot_angle(slot, n) - (1.0 - unroll) * 0.55
         distance = radius * unroll
         return cx + math.cos(angle) * distance, cy + math.sin(angle) * distance
 
@@ -1753,24 +2015,44 @@ class RadialMenu:
         if self.drag_pos is None:
             return max(0, self.drag_index)
         width, height = self.size
-        cx, cy, _radius, _button, n = self.geometry(width, height)
+        cx, cy, _radius, _button, count = self.geometry(width, height)
         x, y = self.drag_pos
         angle = math.atan2(y - cy, x - cx) + math.pi / 2
-        step = 2 * math.pi / n
-        slot = int(round((angle % (2 * math.pi)) / step)) % n
+        step = 2 * math.pi / count
+        slot = int(round((angle % (2 * math.pi)) / step)) % count
         return max(0, min(slot, len(self.actions) - 1))
 
     def tool_centers(self, cx, cy, button):
-        """The two small tools, on a short arc above the centre."""
-        import math
-
-        spread = button * 0.92
-        lift = button * 1.35 * self.tools_progress()
-        size = button * 0.42
+        """The two small tools, unrolling on a short arc above the centre."""
+        opening = ease_out_back(self.tools_progress()) if self.tools_progress() < 1.0 else 1.0
+        spread = button * 0.92 * opening
+        lift = button * 1.35 * opening
+        size = button * 0.42 * max(0.0, min(1.0, self.tools_progress() * 1.6))
         return [
             (cx - spread, cy - lift - button * 0.35, size),
             (cx + spread, cy - lift - button * 0.35, size),
         ]
+
+    # -- the icon on a button -----------------------------------------------
+
+    def themed_icon(self, action: dict) -> str:
+        """The application icon a button should show, "" for the vector one."""
+        return themed_icon_for(action, self.use_app_icons,
+                               self.resolved.get(id(action), ""))
+
+    def resolve_icons(self) -> bool:
+        """Look up the real icon of every action - off the first frame.
+
+        Scanning the desktop entries costs a moment, and the wheel should be
+        on screen before that happens.
+        """
+        if self.use_app_icons:
+            for action in self.actions:
+                if not str(action.get("app_icon", "")).strip():
+                    self.resolved[id(action)] = resolve_app_icon(str(action.get("command", "")))
+            if self.area is not None:
+                self.area.queue_draw()
+        return False
 
     # -- painting -----------------------------------------------------------
 
@@ -1780,6 +2062,9 @@ class RadialMenu:
         width = widget.get_allocated_width()
         height = widget.get_allocated_height()
         self.size = (width, height)
+        now = time.monotonic()
+        dt = max(0.0, min(0.05, now - self.frame))
+        self.frame = now
         fade = self.progress()
         fade_in = ease_out_cubic(min(1.0, fade * 1.6))
         skin = self.skin
@@ -1793,7 +2078,7 @@ class RadialMenu:
         cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
 
-        cx, cy, radius, button, n = self.geometry(width, height)
+        cx, cy, radius, button, count = self.geometry(width, height)
 
         # 2. a soft glow behind the wheel, so the centre reads as the focus
         glow = cairo.RadialGradient(cx, cy, radius * 0.15, cx, cy, radius * 1.9)
@@ -1804,9 +2089,7 @@ class RadialMenu:
         cr.arc(cx, cy, radius * 1.9, 0, 2 * math.pi)
         cr.fill()
 
-        # 3. the header - the title, or the search bar once it slid in
-        if self.search_progress() > 0.01:
-            self.draw_search(cr, width, fade_in)
+        # 3. the title, until the search panel takes the space
         if self.search_slot < 0:
             draw_text(cr, self.title, cx, cy - radius - button - 52, 15, True,
                       (*skin.text[:3], 0.92 * fade_in), max_width=520)
@@ -1820,51 +2103,75 @@ class RadialMenu:
             cr.arc(cx, cy, radius, -math.pi / 2, -math.pi / 2 + 2 * math.pi * ring)
             cr.stroke()
 
-        self.draw_items(cr, cx, cy, radius, button, n, fade_in)
+        self.draw_items(cr, cx, cy, radius, button, count, fade_in, dt)
         self.draw_centre(cr, cx, cy, button, fade_in)
+        if self.search_progress() > 0.005:
+            self.draw_search(cr, width, fade_in)
 
-        # 7. what the current item does, plus the keys that apply right now
+        # 5. what the current item does, plus the keys that apply right now
+        line = min(cy + radius + button + 74, height - 46)
         if self.search_slot < 0 and not self.edit:
             index = self.hover if self.hover >= 0 else self.selected
             if 0 <= index < len(self.actions):
                 subtitle = str(self.actions[index].get("subtitle", ""))
                 if subtitle:
-                    draw_text(cr, subtitle, cx, cy + radius + button + 74, 13.0, False,
+                    draw_text(cr, subtitle, cx, line, 13.0, False,
                               (*skin.text[:3], 0.78 * fade_in), max_width=620)
         if self.search_slot >= 0:
-            hint = tr("hint_search")
+            hint = tr("hint_icon") if self.search_mode == "icon" else tr("hint_search")
         elif self.edit:
             hint = tr("hint_edit")
         else:
             hint = tr("hint_radial")
-        draw_text(cr, hint, cx, cy + radius + button + 104, 11.5, False,
-                  (*skin.text_dim[:3], 0.65 * fade_in), max_width=760)
+        draw_text(cr, hint, cx, min(cy + radius + button + 104, height - 22), 11.5, False,
+                  (*skin.text_dim[:3], 0.65 * fade_in), max_width=820)
         return False
 
-    def draw_items(self, cr, cx, cy, radius, button, n, fade_in) -> None:
+    def draw_items(self, cr, cx, cy, radius, button, count, fade_in, dt) -> None:
+        import math
+
         selected = self.hover if self.hover >= 0 else self.selected
+        settled = self.progress() >= 1.0
+        self.boxes = []
+        alive = set()
+
         for slot, index in enumerate(self.order()):
+            action = self.actions[index]
+            key = id(action)
+            alive.add(key)
             if self.dragging and index == self.drag_index:
-                continue          # it follows the pointer instead
-            progress = self.item_progress(index)
-            if progress <= 0.0:
+                continue                      # it follows the pointer instead
+            unrolling = self.item_progress(index)
+            if unrolling <= 0.0:
                 continue
-            x, y = self.slot_center(slot, cx, cy, radius, n, ease_out_back(progress))
+            state = self.tween(key, self.slot_angle(slot, count), dt, settled)
+            distance = radius * ease_out_back(unrolling)
+            x = cx + math.cos(state["angle"]) * distance
+            y = cy + math.sin(state["angle"]) * distance
             is_selected = index == selected and not self.dragging
-            scale = (0.55 + 0.45 * progress) * (1.06 if is_selected else 1.0)
-            self.draw_item(cr, index, x, y, button * scale,
-                           min(1.0, progress * 1.5) * fade_in, is_selected)
+            scale = (0.55 + 0.45 * unrolling) * state["scale"] * (1.06 if is_selected else 1.0)
+            size = button * scale
+            self.boxes.append(("item", index, x, y, button * 1.22))
+            self.draw_item(cr, index, x, y, size,
+                           min(1.0, unrolling * 1.5) * fade_in, is_selected)
 
         if self.edit and not self.dragging:
-            progress = self.item_progress(len(self.actions))
-            x, y = self.slot_center(len(self.actions), cx, cy, radius, n,
-                                    ease_out_back(max(0.2, progress)))
-            self.draw_add_slot(cr, x, y, button * 0.86, fade_in,
+            alive.add("add")
+            state = self.tween("add", self.slot_angle(len(self.actions), count), dt,
+                               self.edit_progress() < 1.0 or settled)
+            grow = ease_out_back(max(0.05, self.edit_progress()))
+            x = cx + math.cos(state["angle"]) * radius * grow
+            y = cy + math.sin(state["angle"]) * radius * grow
+            self.boxes.append(("add", -1, x, y, button * 1.1))
+            self.draw_add_slot(cr, x, y, button * 0.86 * state["scale"] * grow, fade_in,
                                self.hover == len(self.actions))
 
         if self.dragging and self.drag_pos is not None:
             x, y = self.drag_pos
             self.draw_item(cr, self.drag_index, x, y, button * 1.14, fade_in, True, lifted=True)
+
+        for key in [k for k in self.motion if k not in alive]:
+            del self.motion[key]
 
     def draw_item(self, cr, index: int, x: float, y: float, radius: float,
                   alpha: float, selected: bool, lifted: bool = False) -> None:
@@ -1873,9 +2180,10 @@ class RadialMenu:
         skin = self.skin
         action = self.actions[index]
         empty = not str(action.get("command", "")).strip()
+        filling = index == self.search_slot
 
-        if index == self.search_slot:
-            # The button waiting for an application breathes until it has one.
+        if filling:
+            # The button waiting for an application - or for an icon - breathes.
             pulse = self.pulse()
             cr.set_source_rgba(*skin.accent[:3], (0.10 + 0.20 * pulse) * alpha)
             cr.new_path()
@@ -1904,37 +2212,68 @@ class RadialMenu:
 
         cr.save()
         cr.translate(x, y)
-        icon = "plus" if empty else icon_for(action)
-        draw_icon(cr, icon, radius * 0.92, button_icon_rgba(skin, selected, alpha))
+        themed = "" if empty else self.themed_icon(action)
+        if not (themed and draw_app_icon(cr, themed, radius * 1.05, alpha)):
+            draw_icon(cr, "plus" if empty else icon_for(action), radius * 0.92,
+                      button_icon_rgba(skin, selected, alpha))
         cr.restore()
 
-        if index < 9 and not lifted:
-            self.draw_badge(cr, x + radius * 0.74, y - radius * 0.74, str(index + 1),
-                            skin.accent, alpha)
-        if self.edit and not lifted and self.hover == index and self.search_slot < 0:
-            # Removing an entry belongs where the entry is, not in a submenu.
-            bx, by = x - radius * 0.74, y - radius * 0.74
-            cr.set_source_rgba(*skin.backdrop[:3], 0.95 * alpha)
-            cr.new_path()
-            cr.arc(bx, by, 11.0, 0, 2 * math.pi)
-            cr.fill_preserve()
-            cr.set_source_rgba(*skin.accent[:3], 0.75 * alpha)
-            cr.set_line_width(1.0)
-            cr.stroke()
-            cr.save()
-            cr.translate(bx, by)
-            draw_icon(cr, "cross", 11.0, (*skin.accent[:3], alpha))
-            cr.restore()
+        if lifted:
+            return
+
+        edit = self.edit_progress()
+        number = str(index + 1) if index < 9 else ""
+        if edit > 0.01:
+            # Editing puts two controls on the corners, so the number moves
+            # out of the way instead of fighting them for the same spot.
+            if number:
+                self.draw_badge(cr, x + radius * 0.74, y + radius * 0.74, number,
+                                skin.accent, alpha)
+            scale = ease_out_back(min(1.0, edit * 1.2))
+            hovered = self.hover == index and self.search_slot < 0
+            self.draw_control(cr, x - radius * 0.74, y - radius * 0.74, "cross",
+                              alpha * edit, scale, hovered and self.hover_badge == "remove")
+            self.draw_control(cr, x + radius * 0.74, y - radius * 0.74, "image",
+                              alpha * edit, scale, hovered and self.hover_badge == "icon")
+            # They are always on screen in edit mode, so they are always
+            # clickable - the hover state only decides how they look.
+            self.boxes.append(("remove", index, x - radius * 0.74, y - radius * 0.74, 14.0))
+            self.boxes.append(("icon", index, x + radius * 0.74, y - radius * 0.74, 14.0))
+        elif number:
+            self.draw_badge(cr, x + radius * 0.74, y - radius * 0.74, number, skin.accent, alpha)
 
         label = str(action.get("label") or "")
-        if empty and not label:
+        if filling and self.search_mode == "icon":
+            label = tr("use_original_icon")
+        elif empty and not label:
             label = tr("slot_empty")
-        draw_text(cr, label, x, y + radius + 17, 12.5, selected,
-                  (*skin.text[:3], alpha) if selected else (*skin.text_dim[:3], 0.95 * alpha),
-                  max_width=max(170.0, radius * 4.0))
+        draw_text(cr, label, x, y + radius + 17, 12.5, selected or filling,
+                  (*skin.text[:3], alpha) if selected or filling
+                  else (*skin.text_dim[:3], 0.95 * alpha),
+                  max_width=max(190.0, radius * 4.2))
+
+    def draw_control(self, cr, x, y, icon: str, alpha: float, scale: float,
+                     hovered: bool) -> None:
+        """One of the little badges that edit mode puts on a button."""
+        import math
+
+        skin = self.skin
+        size = 12.5 * max(0.05, scale) * (1.15 if hovered else 1.0)
+        cr.set_source_rgba(*skin.backdrop[:3], 0.95 * alpha)
+        cr.new_path()
+        cr.arc(x, y, size, 0, 2 * math.pi)
+        cr.fill_preserve()
+        cr.set_source_rgba(*skin.accent[:3], (0.95 if hovered else 0.6) * alpha)
+        cr.set_line_width(1.2)
+        cr.stroke()
+        cr.save()
+        cr.translate(x, y)
+        draw_icon(cr, icon, size * 1.05, (*skin.accent[:3], alpha))
+        cr.restore()
 
     def draw_add_slot(self, cr, x, y, radius, alpha, hovered) -> None:
         skin = self.skin
+        radius = max(2.0, radius)
         cr.set_source_rgba(*skin.text[:3], (0.10 if hovered else 0.05) * alpha)
         button_path(cr, skin, x, y, radius)
         cr.fill()
@@ -1982,11 +2321,14 @@ class RadialMenu:
         draw_icon(cr, "sparkle", button * 0.72,
                   (*skin.accent[:3], (1.0 if active else 0.85) * fade_in))
         cr.restore()
+        self.boxes.append(("centre", -1, cx, cy, button * 0.9))
 
         opening = self.tools_progress()
         if opening <= 0.01 or self.dragging:
             return          # a dragged button must not slide behind them
         for i, (tx, ty, size) in enumerate(self.tool_centers(cx, cy, button)):
+            if size < 1.0:
+                continue
             chosen = i == self.hover_tool or (i == 1 and self.edit)
             paint_button(cr, skin, tx, ty, size, 0, chosen, opening * fade_in)
             cr.save()
@@ -1994,6 +2336,7 @@ class RadialMenu:
             draw_icon(cr, ("gear", "pencil")[i], size * 0.95,
                       button_icon_rgba(skin, chosen, opening * fade_in))
             cr.restore()
+            self.boxes.append(("tool", i, tx, ty, size * 1.45))
         if self.hover_tool >= 0:
             # Below the centre: above it the tools would sit on the label of
             # whatever button happens to be at the top of the wheel.
@@ -2001,116 +2344,161 @@ class RadialMenu:
             draw_text(cr, label, cx, cy + button * 1.45, 12.0, False,
                       (*skin.text[:3], 0.92 * opening * fade_in), max_width=360)
 
+    def frosted(self, cr, x, y, width, height, alpha) -> bool:
+        """The desktop behind the panel, blurred - frosted glass, cheaply.
+
+        Two bilinear scales (far down, then back up) are a box blur that
+        GdkPixbuf does in C; blurring by hand in Python would not survive a
+        redraw at 60 Hz. The source region is taken from where the panel
+        settles, so the slide-in does not invalidate the cache every frame.
+        """
+        if self.backdrop is None:
+            return False
+        key = (int(x), int(width), int(height))
+        pixbuf = self.frost.get(key)
+        if pixbuf is None:
+            try:
+                available_w = self.backdrop.get_width()
+                available_h = self.backdrop.get_height()
+                src_x = max(0, min(int(x), available_w - 1))
+                src_w = max(1, min(int(width), available_w - src_x))
+                src_h = max(1, min(int(height), available_h - 44))
+                sub = self.backdrop.new_subpixbuf(src_x, 44, src_w, src_h)
+                small = sub.scale_simple(max(2, src_w // 14), max(2, src_h // 14),
+                                         GdkPixbuf.InterpType.BILINEAR)
+                pixbuf = small.scale_simple(src_w, src_h, GdkPixbuf.InterpType.BILINEAR)
+            except Exception:
+                pixbuf = False
+            self.frost[key] = pixbuf
+        if not pixbuf:
+            return False
+        Gdk.cairo_set_source_pixbuf(cr, pixbuf, x, y)
+        cr.paint_with_alpha(alpha)
+        return True
+
     def draw_search(self, cr, width: int, fade_in: float) -> None:
         skin = self.skin
         shown = self.search_progress()
         alpha = shown * fade_in
-        box_w = min(620.0, max(380.0, width * 0.46))
-        box_h = 48.0
-        x = (width - box_w) / 2.0
-        y = 62.0 - 18.0 * (1.0 - shown)
+        x, y, panel_w, panel_h = self.search_panel(width)
+        pad = self.PANEL_PAD
 
-        rounded_rect_path(cr, x, y, box_w, box_h, box_h / 2)
-        cr.set_source_rgba(*lighten(skin.button, 0.06)[:3], 0.97 * alpha)
+        # A shadow, so the panel reads as something lying on top of the wheel.
+        cr.set_source_rgba(0, 0, 0, 0.38 * alpha)
+        rounded_rect_path(cr, x + 2, y + 7, panel_w, panel_h, 17)
+        cr.fill()
+
+        cr.save()
+        rounded_rect_path(cr, x, y, panel_w, panel_h, 16)
+        cr.clip()
+        if self.frosted(cr, x, y, panel_w, panel_h, alpha):
+            cr.set_source_rgba(*skin.backdrop[:3], 0.80 * alpha)   # keep the contrast
+        else:
+            cr.set_source_rgba(*skin.backdrop[:3], 0.99 * alpha)
+        cr.paint()
+        cr.restore()
+        rounded_rect_path(cr, x, y, panel_w, panel_h, 16)
+        cr.set_source_rgba(*skin.accent[:3], 0.45 * alpha)
+        cr.set_line_width(1.4)
+        cr.stroke()
+
+        # the input line
+        box_x, box_y = x + pad, y + pad
+        box_w, box_h = panel_w - 2 * pad, self.PANEL_BOX
+        rounded_rect_path(cr, box_x, box_y, box_w, box_h, box_h / 2)
+        cr.set_source_rgba(*lighten(skin.button, 0.10)[:3], 0.96 * alpha)
         cr.fill_preserve()
-        cr.set_source_rgba(*skin.accent[:3], 0.65 * alpha)
-        cr.set_line_width(1.6)
+        cr.set_source_rgba(*skin.accent[:3], 0.55 * alpha)
+        cr.set_line_width(1.3)
         cr.stroke()
 
         cr.save()
-        cr.translate(x + 30, y + box_h / 2)
-        draw_icon(cr, "search", 21, (*skin.accent[:3], 0.9 * alpha))
+        cr.translate(box_x + 24, box_y + box_h / 2)
+        draw_icon(cr, "image" if self.search_mode == "icon" else "search", 20,
+                  (*skin.accent[:3], 0.9 * alpha))
         cr.restore()
 
-        text_x = x + 54
+        text_x = box_x + 46
         if self.search_text:
-            width_used = draw_text(cr, self.search_text, text_x, y + box_h / 2, 16, False,
-                                   (*skin.text[:3], alpha), align="left")
+            used = draw_text(cr, self.search_text, text_x, box_y + box_h / 2, 16, False,
+                             (*skin.text[:3], alpha), align="left")
         else:
-            width_used = 0
-            draw_text(cr, tr("search_placeholder"), text_x, y + box_h / 2, 16, False,
+            used = 0
+            placeholder = tr("search_icon") if self.search_mode == "icon" \
+                else tr("search_placeholder")
+            draw_text(cr, placeholder, text_x, box_y + box_h / 2, 16, False,
                       (*skin.text_dim[:3], 0.75 * alpha), align="left")
         if int(time.monotonic() * 2) % 2 == 0:
             cr.set_source_rgba(*skin.accent[:3], alpha)
-            cr.rectangle(text_x + width_used + 3, y + box_h / 2 - 11, 2, 22)
+            cr.rectangle(text_x + used + 3, box_y + box_h / 2 - 11, 2, 22)
             cr.fill()
 
-        row_h = 42.0
-        for i, app in enumerate(self.search_hits[:self.MAX_HITS]):
-            row_y = y + box_h + 12 + i * row_h
-            middle = row_y + (row_h - 6) / 2
+        # the results, each rolling in a moment after the one above it
+        elapsed = time.monotonic() - (self.hits_at or time.monotonic())
+        for i, hit in enumerate(self.search_hits[:self.MAX_HITS]):
+            row_p = ease_out_cubic(max(0.0, min(1.0, (elapsed - i * 0.045) / 0.20)))
+            if row_p <= 0.0:
+                continue
+            row_alpha = alpha * row_p
+            row_y = box_y + box_h + 8 + i * self.PANEL_ROW
+            middle = row_y + (self.PANEL_ROW - 6) / 2
+            slide = (1.0 - row_p) * 16.0
             chosen = i == self.search_index
             if chosen:
-                rounded_rect_path(cr, x, row_y, box_w, row_h - 6, 11)
-                cr.set_source_rgba(*skin.accent[:3], 0.22 * alpha)
+                rounded_rect_path(cr, box_x, row_y, box_w, self.PANEL_ROW - 6, 11)
+                cr.set_source_rgba(*skin.accent[:3], 0.26 * row_alpha)
                 cr.fill()
             cr.save()
-            cr.translate(x + 30, middle)
-            draw_icon(cr, app.icon, 21,
-                      (*(skin.accent if chosen else skin.text)[:3], 0.95 * alpha))
+            cr.translate(box_x + 24 + slide, middle)
+            themed = getattr(hit, "icon_name", "")
+            if not (themed and draw_app_icon(cr, themed, 24, row_alpha)):
+                draw_icon(cr, hit.icon, 21,
+                          (*(skin.accent if chosen else skin.text)[:3], 0.95 * row_alpha))
             cr.restore()
-            draw_text(cr, app.name, text_x, middle - (8 if app.comment else 0), 13.5, chosen,
-                      (*skin.text[:3], alpha), max_width=box_w - 90, align="left")
-            if app.comment:
-                draw_text(cr, app.comment, text_x, middle + 9, 11.0, False,
-                          (*skin.text_dim[:3], 0.9 * alpha), max_width=box_w - 90, align="left")
+            draw_text(cr, hit.name, text_x + slide, middle - (8 if hit.comment else 0),
+                      13.5, chosen, (*skin.text[:3], row_alpha),
+                      max_width=box_w - 70, align="left")
+            if hit.comment:
+                draw_text(cr, hit.comment, text_x + slide, middle + 9, 11.0, False,
+                          (*skin.text_dim[:3], 0.9 * row_alpha),
+                          max_width=box_w - 70, align="left")
         if self.search_text and not self.search_hits:
-            draw_text(cr, tr("cfg_apps_none"), text_x, y + box_h + 30, 13.0, False,
+            draw_text(cr, tr("cfg_apps_none"), text_x, box_y + box_h + 26, 13.0, False,
                       (*skin.text_dim[:3], alpha), align="left")
 
     # -- what is under the pointer ------------------------------------------
 
-    def search_box(self, width: int):
-        box_w = min(620.0, max(380.0, width * 0.46))
-        box_h = 48.0
-        shown = self.search_progress()
-        return (width - box_w) / 2.0, 62.0 - 18.0 * (1.0 - shown), box_w, box_h
-
-    def search_hit_at(self, mx, my, width):
-        x, y, box_w, box_h = self.search_box(width)
-        if not x <= mx <= x + box_w:
+    def search_hit_at(self, mx, my, width) -> int:
+        x, y, panel_w, _panel_h = self.search_panel(width)
+        box_x = x + self.PANEL_PAD
+        box_w = panel_w - 2 * self.PANEL_PAD
+        top = y + self.PANEL_PAD + self.PANEL_BOX + 8
+        if not box_x <= mx <= box_x + box_w:
             return -1
-        row_h = 42.0
         for i in range(len(self.search_hits[:self.MAX_HITS])):
-            row_y = y + box_h + 12 + i * row_h
-            if row_y <= my <= row_y + row_h - 6:
+            row_y = top + i * self.PANEL_ROW
+            if row_y <= my <= row_y + self.PANEL_ROW - 6:
                 return i
         return -1
 
     def hit(self, mx: float, my: float):
-        """(kind, index) of whatever sits under the pointer."""
-        width, height = self.size
-        cx, cy, radius, button, n = self.geometry(width, height)
+        """(kind, index) of whatever sits under the pointer.
 
+        Everything is tested against what was actually drawn last frame, so a
+        button that is still easing into place still catches the click where
+        the eye expects it.
+        """
+        width, _height = self.size
         if self.search_slot >= 0:
             index = self.search_hit_at(mx, my, width)
             if index >= 0:
                 return ("hit", index)
-            x, y, box_w, box_h = self.search_box(width)
-            if x <= mx <= x + box_w and y <= my <= y + box_h:
-                return ("searchbox", -1)
-
-        if self.tools_at is not None and self.tools_progress() > 0.35:
-            for i, (tx, ty, size) in enumerate(self.tool_centers(cx, cy, button)):
-                if (mx - tx) ** 2 + (my - ty) ** 2 <= (size * 1.45) ** 2:
-                    return ("tool", i)
-        if (mx - cx) ** 2 + (my - cy) ** 2 <= (button * 0.9) ** 2:
-            return ("centre", -1)
-
-        for slot, index in enumerate(self.order()):
-            unroll = ease_out_back(max(0.001, self.item_progress(index)))
-            x, y = self.slot_center(slot, cx, cy, radius, n, unroll)
-            if self.edit and self.hover == index and self.search_slot < 0:
-                bx, by = x - button * 0.74, y - button * 0.74
-                if (mx - bx) ** 2 + (my - by) ** 2 <= 13.0 ** 2:
-                    return ("remove", index)
-            if (mx - x) ** 2 + (my - y) ** 2 <= (button * 1.22) ** 2:
-                return ("item", index)
-
-        if self.edit and not self.dragging:
-            x, y = self.slot_center(len(self.actions), cx, cy, radius, n)
-            if (mx - x) ** 2 + (my - y) ** 2 <= (button * 1.1) ** 2:
-                return ("add", -1)
+            x, y, panel_w, panel_h = self.search_panel(width)
+            if x <= mx <= x + panel_w and y <= my <= y + panel_h:
+                return ("panel", -1)
+        for kind, index, bx, by, reach in reversed(self.boxes):
+            if (mx - bx) ** 2 + (my - by) ** 2 <= reach ** 2:
+                return (kind, index)
         return ("none", -1)
 
     # -- pointer and keyboard -----------------------------------------------
@@ -2124,15 +2512,17 @@ class RadialMenu:
             if dx * dx + dy * dy > self.DRAG_SLOP ** 2:
                 self.dragging = True
                 self.drag_index = self.press_index
-                self.sound.play("toggle-show")
+                self.sound.play("drag-lift")
 
         kind, index = self.hit(event.x, event.y)
-        hover, hover_tool, hover_centre = -1, -1, False
+        hover, hover_tool, hover_centre, badge = -1, -1, False, ""
         if kind == "tool":
             hover_tool = index
         elif kind == "centre":
             hover_centre = True
-        elif kind in ("item", "remove"):
+        elif kind in ("remove", "icon"):
+            hover, badge = index, kind
+        elif kind == "item":
             hover = index
         elif kind == "add":
             hover = len(self.actions)
@@ -2143,6 +2533,7 @@ class RadialMenu:
             self.selected = hover
             self.sound.play("toggle-show")
         self.hover, self.hover_tool, self.hover_centre = hover, hover_tool, hover_centre
+        self.hover_badge = badge
         self.area.queue_draw()
         return True
 
@@ -2155,16 +2546,21 @@ class RadialMenu:
         if kind == "hit":
             self.search_index = index
             self.take_hit()
-        elif kind == "searchbox":
+        elif kind == "panel":
             pass
         elif self.search_slot >= 0:
-            self.cancel_search()
+            if kind == "item" and index == self.search_slot and self.search_mode == "icon":
+                self.use_original_icon()
+            else:
+                self.cancel_search()
         elif kind == "tool":
             self.use_tool(index)
         elif kind == "centre":
             self.toggle_tools()
         elif kind == "remove":
             self.remove_slot(index)
+        elif kind == "icon":
+            self.open_search(index, mode="icon")
         elif kind == "add":
             self.add_slot()
         elif kind == "item":
@@ -2293,13 +2689,15 @@ class RadialMenu:
 
     def enter_edit(self) -> None:
         self.edit = True
+        self.edit_at = time.monotonic()
         if self.tools_at is None:
             self.tools_at = time.monotonic()
         self.sound.play("menu-open")
 
     def leave_edit(self) -> None:
-        self.cancel_search()
+        self.cancel_search(cue=False)
         self.edit = False
+        self.edit_at = None
         # Placeholders nobody filled never reach the configuration.
         self.actions[:] = [a for a in self.actions if str(a.get("command", "")).strip()]
         self.selected = max(0, min(self.selected, len(self.actions) - 1))
@@ -2322,63 +2720,99 @@ class RadialMenu:
             self.sound.play("error")
             return
         if self.search_slot == index:
-            self.cancel_search()
+            self.cancel_search(cue=False)
         del self.actions[index]
         self.selected = max(0, min(self.selected, len(self.actions) - 1))
         self.sound.play("toggle-hide")
         self.save()
 
-    def open_search(self, index: int) -> None:
+    def open_search(self, index: int, mode: str = "app") -> None:
         if not 0 <= index < len(self.actions):
             return
         self.search_slot = index
+        self.search_mode = mode
         self.search_at = time.monotonic()
         self.search_text = ""
         self.search_index = 0
         if self.apps is None:
-            self.apps = read_apps()
+            self.apps = installed_apps()
         self.refresh_hits()
         self.sound.play("toggle-show")
 
-    def cancel_search(self) -> None:
+    def cancel_search(self, cue: bool = True) -> None:
         if self.search_slot < 0:
             return
+        self.close_search()
+        if cue:
+            self.sound.play("menu-dismiss")
+
+    def close_search(self) -> None:
         self.search_slot = -1
         self.search_at = None
         self.search_text = ""
         self.search_hits = []
-        self.sound.play("menu-dismiss")
+        self.search_mode = "app"
 
     def refresh_hits(self) -> None:
         query = self.search_text.strip().lower()
-        scored = []
-        for app in self.apps or []:
-            score = match_score(app, query)
-            if score >= 0:
-                scored.append((score, app.name.lower(), app))
-        scored.sort(key=lambda entry: (entry[0], entry[1]))
-        self.search_hits = [entry[2] for entry in scored[:self.MAX_HITS]]
+        if self.search_mode == "icon":
+            self.search_hits = icon_choices(query, self.apps or [])[:self.MAX_HITS]
+        else:
+            scored = []
+            for app in self.apps or []:
+                score = match_score(app, query)
+                if score >= 0:
+                    scored.append((score, app.name.lower(), app))
+            scored.sort(key=lambda entry: (entry[0], entry[1]))
+            self.search_hits = [entry[2] for entry in scored[:self.MAX_HITS]]
         self.search_index = 0
+        self.hits_at = time.monotonic()
 
     def take_hit(self) -> None:
         if not self.search_hits or self.search_slot < 0:
             return
-        app = self.search_hits[min(self.search_index, len(self.search_hits) - 1)]
+        hit = self.search_hits[min(self.search_index, len(self.search_hits) - 1)]
         index = self.search_slot
-        self.search_slot = -1
-        self.search_at = None
-        self.search_text = ""
-        self.search_hits = []
+        mode = self.search_mode
+        self.close_search()
         action = self.actions[index]
-        action.update({
-            "id": slugify(app.name) or action.get("id", ""),
-            "label": app.name,
-            "subtitle": app.comment,
-            "command": f"@terminal {app.command}" if app.terminal else app.command,
-            "window_class": app.window_class,
-            "icon": app.icon,
-        })
+
+        if mode == "icon":
+            themed = getattr(hit, "icon_name", "")
+            if themed:
+                action["app_icon"] = themed
+                action["icon_source"] = "app"
+            else:
+                action["icon"] = hit.icon
+                action["icon_source"] = "vector"
+                self.resolved.pop(id(action), None)
+        else:
+            action.update({
+                "id": slugify(hit.name) or action.get("id", ""),
+                "label": hit.name,
+                "subtitle": hit.comment,
+                "command": f"@terminal {hit.command}" if hit.terminal else hit.command,
+                "window_class": hit.window_class,
+                "icon": hit.icon,
+                "app_icon": hit.icon_name,
+            })
+            self.resolved.pop(id(action), None)
         self.selected = index
+        self.sound.play("toggle-show")
+        self.save()
+
+    def use_original_icon(self) -> None:
+        """Back to the icon the application itself brings along."""
+        index = self.search_slot
+        action = self.actions[index]
+        name = (str(action.get("app_icon", "")).strip()
+                or resolve_app_icon(str(action.get("command", ""))))
+        self.close_search()
+        if not name:
+            self.sound.play("error")
+            return
+        action["app_icon"] = name
+        action["icon_source"] = "app"
         self.sound.play("toggle-show")
         self.save()
 
@@ -2388,8 +2822,8 @@ class RadialMenu:
         if 0 <= self.drag_index < len(self.actions) and target != self.drag_index:
             self.actions.insert(target, self.actions.pop(self.drag_index))
             self.selected = target
-            self.sound.play("toggle-show")
             self.save()
+        self.sound.play("drag-drop")
         self.drag_index = -1
 
     def save(self) -> None:
@@ -2414,6 +2848,22 @@ class RadialMenu:
         self.closing_at = time.monotonic()
 
     # -- the window ---------------------------------------------------------
+
+    def grab_backdrop(self) -> None:
+        """A snapshot of the desktop, for the frosted search panel.
+
+        It has to happen before the overlay is mapped - afterwards the screen
+        shows our own dimmed copy of the desktop, wheel included. Only the
+        strip the panel can cover is taken, which keeps it a few milliseconds.
+        """
+        try:
+            root = Gdk.get_default_root_window()
+            width = min(self.size[0], root.get_width() - self.origin[0])
+            height = min(460, self.size[1], root.get_height() - self.origin[1])
+            self.backdrop = Gdk.pixbuf_get_from_window(
+                root, self.origin[0], self.origin[1], width, height)
+        except Exception:
+            self.backdrop = None
 
     def run(self) -> None:
         pidfile = runtime_dir() / "menu.pid"
@@ -2447,13 +2897,16 @@ class RadialMenu:
             monitor = display.get_primary_monitor() if hasattr(display, "get_primary_monitor") else None
             if monitor is not None:
                 geo = monitor.get_geometry()
+        self.origin = (0, 0)
         if geo is not None:
             win.move(geo.x, geo.y)
             win.set_default_size(geo.width, geo.height)
             win.resize(geo.width, geo.height)
             self.size = (geo.width, geo.height)
+            self.origin = (geo.x, geo.y)
         else:
             win.fullscreen()
+        self.grab_backdrop()
 
         self.area = Gtk.DrawingArea()
         self.area.add_events(
@@ -2491,8 +2944,8 @@ class RadialMenu:
             return False
 
         def on_focus_out(*_args) -> bool:
-            # Editing means dialogs and a lot of clicking; a bounced focus
-            # must not throw the work away halfway through.
+            # Editing means a lot of clicking; a bounced focus must not throw
+            # the work away halfway through.
             if (close_on_focus_loss and focus_state["had_focus"] and not self.edit
                     and time.monotonic() - opened_at > 0.6):
                 self.begin_close(None)
@@ -2507,6 +2960,8 @@ class RadialMenu:
             60, lambda: (win.get_window() and win.get_window().focus(Gdk.CURRENT_TIME), False)[1]
         )
         GLib.timeout_add(16, tick)
+        if self.use_app_icons:
+            GLib.timeout_add(90, self.resolve_icons)
 
         self.sound.play("menu-open")
         signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
@@ -2710,7 +3165,8 @@ def main(argv: list[str]) -> int:
         launch_resolved({"command": "@configure"}, sound)
         return 0
     elif mode in ("test-sounds",):
-        for cue in ("menu-open", "toggle-show", "toggle-hide", "launch", "menu-dismiss", "error"):
+        for cue in ("menu-open", "toggle-show", "toggle-hide", "launch",
+                    "menu-dismiss", "error", "drag-lift", "drag-drop"):
             print(f"  {cue}")
             sound.play(cue)
             time.sleep(1.0)

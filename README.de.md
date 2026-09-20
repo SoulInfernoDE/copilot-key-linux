@@ -118,8 +118,9 @@ Arbeit. Rechts zeigt das Rad, wie das Menü aussehen wird, und **Menü testen**
 unter *Erweitert* ist optional.
 
 Unter **Verhalten** liegen Sounds, Lautstärke, das Zeitfenster für den
-Doppeldruck, die Überschrift, der Menü-Stil und ob das Editorfenster dem
-hellen oder dunklen Design des Desktops folgt.
+Doppeldruck, die Überschrift, der Menü-Stil, ob die Buttons die Original-Icons
+der Anwendungen statt der gezeichneten Symbole tragen, und ob das Editorfenster
+dem hellen oder dunklen Design des Desktops folgt.
 
 ### Oder ohne das Rad zu verlassen
 
@@ -134,6 +135,10 @@ selbst zum Editor.
   Tippen, mit `↑`/`↓` und `Enter` eine Anwendung wählen – sie landet auf dem
   angeklickten Button, der so lange leuchtet, bis er belegt ist.
 * **+** legt einen weiteren Button an, **✕** auf einem Button entfernt ihn.
+* Das **Bild-Zeichen** auf einem Button ändert sein Symbol: dieselbe Suche,
+  jetzt mit den gezeichneten Symbolen und dem Icon jeder installierten
+  Anwendung. Ein Klick auf den pulsierenden Button selbst holt sein
+  Original-Icon zurück.
 * `Esc` verlässt den Editiermodus, `Esc` noch einmal schließt das Menü.
 
 Einen Speichern-Knopf gibt es nicht: jede Änderung steht sofort in der Datei.
@@ -255,7 +260,7 @@ Fallstricke.
 
 ## Sounds
 
-Sechs Cues, alle aus derselben Klangfamilie – weiche Glasglocken auf einer
+Acht Cues, alle aus derselben Klangfamilie – weiche Glasglocken auf einer
 pentatonischen Skala über D, kurz, leise (Spitze −18 dBFS) und mit weichem
 Attack, damit nichts klickt oder aufdringlich wirkt:
 
@@ -267,6 +272,8 @@ Attack, damit nichts klickt oder aufdringlich wirkt:
 | `toggle-show` | Fenster kommt nach vorne | heller Blip mit Aufwärts-Glide |
 | `toggle-hide` | Fenster wird minimiert | derselbe Blip abwärts |
 | `error` | Aktion nicht ausführbar | tiefer Doppelton, bewusst nicht schrill |
+| `drag-lift` | ein Button wird angehoben | kurzer Zupfer aufwärts |
+| `drag-drop` | er wird abgelegt | ein Plopp, sofort gedämpft |
 
 Anhören:
 
@@ -317,7 +324,7 @@ config/config.de.toml    Konfigurationsvorlage (deutsch, vom Editor erzeugt)
 config/keyd-copilot.conf keyd-Regel für den Copilot-Akkord
 config/copilot-key-config.desktop  Startmenü-Eintrag für den Editor
 config/copilot-key-autostart.desktop  Einrichtung pro Nutzer beim Login
-sounds/                  sechs CC0-Cues
+sounds/                  acht CC0-Cues
 tools/generate_sounds.py Sound-Generator
 detect-key.sh            zeigt, was die Taste tatsächlich sendet
 doctor.sh                prüft Installation, Audio-Kette und Tastenkürzel

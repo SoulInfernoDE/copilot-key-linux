@@ -9,6 +9,9 @@ Sound design brief:
   * short (<500 ms), quiet (peak -18 dBFS), soft attack to avoid clicks
   * one shared pentatonic scale so every cue belongs to the same family
 
+The two drag cues are the shortest of the family on purpose: they fire while
+the pointer is moving, so they have to be felt rather than listened to.
+
 Usage:  python3 tools/generate_sounds.py [output_dir]
 """
 
@@ -149,6 +152,23 @@ def cue_error() -> np.ndarray:
     return buf
 
 
+def cue_drag_lift() -> np.ndarray:
+    """Short upward pluck: the button came loose and now follows the pointer."""
+    buf = np.zeros(int(SR * 0.26))
+    place(buf, bell(NOTE["E5"], 0.17, decay=17.0, attack=0.003, bend=0.060), 0.000, 0.75)
+    place(buf, bell(NOTE["B4"], 0.15, decay=15.0, attack=0.004), 0.000, 0.30)
+    return buf
+
+
+def cue_drag_drop() -> np.ndarray:
+    """A plop: a low note bent sharply down, damped almost at once."""
+    buf = np.zeros(int(SR * 0.28))
+    place(buf, bell(NOTE["D4"], 0.20, decay=21.0, attack=0.002, bend=-0.22,
+                    harmonics=((1.0, 1.0), (2.0, 0.06))), 0.000, 1.00)
+    place(buf, bell(NOTE["D5"], 0.09, decay=30.0, attack=0.002), 0.004, 0.20)
+    return buf
+
+
 CUES = {
     "menu-open": cue_menu_open,
     "menu-dismiss": cue_menu_dismiss,
@@ -156,6 +176,8 @@ CUES = {
     "toggle-show": cue_toggle_show,
     "toggle-hide": cue_toggle_hide,
     "error": cue_error,
+    "drag-lift": cue_drag_lift,
+    "drag-drop": cue_drag_drop,
 }
 
 

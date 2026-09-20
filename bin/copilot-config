@@ -220,8 +220,8 @@ def theme_rgba(widget):
     return (color.red, color.green, color.blue, color.alpha)
 
 
-def icon_area(get_name, size=20, get_rgba=None):
-    """A widget that paints one of the launcher's vector icons."""
+def icon_area(get_name, size=20, get_rgba=None, get_themed=None):
+    """A widget that paints what the button will show - drawn or real."""
     area = Gtk.DrawingArea()
     area.set_size_request(size + 8, size + 8)
 
@@ -229,6 +229,9 @@ def icon_area(get_name, size=20, get_rgba=None):
         if not HAVE_CAIRO:
             return False
         cr.translate(widget.get_allocated_width() / 2, widget.get_allocated_height() / 2)
+        themed = get_themed() if get_themed is not None else ""
+        if themed and CK.draw_app_icon(cr, themed, size + 4):
+            return False
         rgba = get_rgba() if get_rgba is not None else theme_rgba(widget)
         CK.draw_icon(cr, get_name() or "sparkle", size, rgba)
         return False
@@ -238,7 +241,7 @@ def icon_area(get_name, size=20, get_rgba=None):
 
 
 def draw_wheel_preview(cr, width, height, skin, actions, selected=-1,
-                       empty_text="") -> None:
+                       empty_text="", app_icons=False) -> None:
     """The wheel as the menu will draw it - same skin, same shapes."""
     import math
 
@@ -272,8 +275,11 @@ def draw_wheel_preview(cr, width, height, skin, actions, selected=-1,
         paint_button(cr, skin, x, y, button, index, chosen, 1.0)
         cr.save()
         cr.translate(x, y)
-        CK.draw_icon(cr, CK.icon_for(action), button * 0.92,
-                     button_icon_rgba(skin, chosen, 1.0))
+        themed = CK.themed_icon_for(action, app_icons,
+                                    CK.resolve_app_icon(action.get("command", "")))
+        if not (themed and CK.draw_app_icon(cr, themed, button * 1.05)):
+            CK.draw_icon(cr, CK.icon_for(action), button * 0.92,
+                         button_icon_rgba(skin, chosen, 1.0))
         cr.restore()
         if index < 9:
             bx, by = x + button * 0.78, y - button * 0.78
@@ -648,6 +654,18 @@ class Editor:
         grid.attach(dim, 1, row, 1, 1)
         row += 1
 
+        icons = Gtk.CheckButton(label=tr("cfg_gen_app_icons"))
+        icons.set_tooltip_text(tr("cfg_gen_app_icons_hint"))
+        icons.set_active(bool(self.general.get("use_app_icons", False)))
+        icons.connect("toggled", self.on_app_icons_toggled)
+        grid.attach(icons, 1, row, 1, 1)
+        row += 1
+        icons_hint = Gtk.Label(label=tr("cfg_gen_app_icons_hint"), xalign=0.0)
+        icons_hint.get_style_context().add_class("cp-dim")
+        icons_hint.set_line_wrap(True)
+        grid.attach(icons_hint, 1, row, 1, 1)
+        row += 1
+
         grid.attach(Gtk.Label(label=tr("cfg_gen_theme"), xalign=1.0), 0, row, 1, 1)
         theme = Gtk.ComboBoxText()
         for value in ("auto", "dark", "light"):
@@ -735,7 +753,8 @@ class Editor:
     def on_draw_skin_preview(self, widget, cr) -> bool:
         draw_wheel_preview(cr, widget.get_allocated_width(), widget.get_allocated_height(),
                            self.skin, self.actions, self.selected,
-                           empty_text=tr("cfg_preview_empty"))
+                           empty_text=tr("cfg_preview_empty"),
+                           app_icons=bool(self.general.get("use_app_icons", False)))
         return False
 
     def on_skin_selected(self, _listbox, row) -> None:
@@ -786,7 +805,10 @@ class Editor:
         number.set_size_request(14, -1)
         line.pack_start(number, False, False, 0)
 
-        icon = icon_area((lambda a: lambda: CK.icon_for(a))(action), 20)
+        icon = icon_area((lambda a: lambda: CK.icon_for(a))(action), 20,
+                         get_themed=(lambda a: lambda: CK.themed_icon_for(
+                             a, bool(self.general.get("use_app_icons", False)),
+                             CK.resolve_app_icon(a.get("command", ""))))(action))
         line.pack_start(icon, False, False, 0)
 
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
@@ -894,6 +916,8 @@ class Editor:
                 self.loading = False
             return
         self.current()["icon"] = name
+        # An explicit pick overrules the "use the app's own icons" setting.
+        self.current()["icon_source"] = "vector"
         self.loading = True
         for other, other_button in self.icon_buttons.items():
             if other != name and other_button.get_active():
@@ -945,6 +969,15 @@ class Editor:
         if value:
             self.general[key] = value
             self.mark_dirty()
+
+    def on_app_icons_toggled(self, button) -> None:
+        if self.loading:
+            return
+        self.general["use_app_icons"] = bool(button.get_active())
+        self.mark_dirty()
+        for index in range(len(self.actions)):
+            self.refresh_row(index)
+        self.queue_preview()
 
     def on_theme_changed(self, combo) -> None:
         value = combo.get_active_id()
@@ -1007,7 +1040,8 @@ class Editor:
     def on_draw_preview(self, widget, cr) -> bool:
         draw_wheel_preview(cr, widget.get_allocated_width(), widget.get_allocated_height(),
                            self.skin, self.actions, self.selected,
-                           empty_text=tr("cfg_preview_empty"))
+                           empty_text=tr("cfg_preview_empty"),
+                           app_icons=bool(self.general.get("use_app_icons", False)))
         return False
 
     def on_preview_click(self, _widget, event) -> bool:
@@ -1132,6 +1166,8 @@ class Editor:
         action["command"] = f"@terminal {app.command}" if app.terminal else app.command
         action["window_class"] = app.window_class
         action["icon"] = app.icon
+        action["app_icon"] = app.icon_name
+        action.pop("icon_source", None)      # follow the setting again
         self.mark_dirty()
         self.load_form()
         self.refresh_row(self.selected)
