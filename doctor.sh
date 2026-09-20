@@ -9,9 +9,15 @@ SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # shellcheck source=lib/i18n.sh
 . "$SRC/lib/i18n.sh"
 
-BIN_DIR="$HOME/.local/bin"
-DATA_DIR="$HOME/.local/share/copilot-key"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/copilot-key/config.toml"
+
+# The install can be system-wide or inside one home; look for both.
+for candidate in "$HOME/.local/share/copilot-key" /usr/local/share/copilot-key \
+                 /usr/share/copilot-key "$SRC"; do
+    [ -d "$candidate/sounds" ] && { DATA_DIR="$candidate"; break; }
+done
+DATA_DIR="${DATA_DIR:-$HOME/.local/share/copilot-key}"
+BIN_DIR="$(dirname "$(command -v copilot-key 2>/dev/null || echo "$HOME/.local/bin/copilot-key")")"
 
 pass()  { printf '\033[1;32m  ok \033[0m%s\n' "$*"; }
 fail()  { printf '\033[1;31m  x  \033[0m%s\n' "$*"; }
@@ -19,8 +25,9 @@ note()  { printf '\033[1;33m  !  \033[0m%s\n' "$*"; }
 head_() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
 
 head_ "$(t doc_install)"
-for f in "$BIN_DIR/copilot-key" "$BIN_DIR/copilot-sound"; do
-    if [ -x "$f" ]; then pass "$f"; else fail "$(t doc_missing "$f")"; fi
+for f in copilot-key copilot-sound copilot-config; do
+    found="$(command -v "$f" 2>/dev/null || true)"
+    if [ -n "$found" ] && [ -x "$found" ]; then pass "$found"; else fail "$(t doc_missing "$f")"; fi
 done
 if [ -f "$CONF" ]; then pass "$(t doc_config "$CONF")"; else fail "$(t doc_config_missing "$CONF")"; fi
 
@@ -36,6 +43,15 @@ if [ -d "$DATA_DIR/sounds" ]; then
 else
     fail "$(t doc_sounds_nodir "$DATA_DIR/sounds")"
 fi
+
+head_ "$(t doc_skins)"
+skin_dir=""
+for candidate in "${XDG_CONFIG_HOME:-$HOME/.config}/copilot-key/skins" "$DATA_DIR/skins"; do
+    [ -d "$candidate" ] || continue
+    count=$(find "$candidate" -maxdepth 1 -name '*.toml' | wc -l)
+    [ "$count" -gt 0 ] && { pass "$(t doc_skins_found "$count" "$candidate")"; skin_dir="$candidate"; }
+done
+[ -n "$skin_dir" ] || note "$(t doc_skins_none)"
 
 head_ "$(t doc_audio)"
 if command -v pactl >/dev/null 2>&1; then

@@ -8,8 +8,14 @@ SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # shellcheck source=lib/i18n.sh
 . "$SRC/lib/i18n.sh"
 
-BIN_DIR="$HOME/.local/bin"
-DATA_DIR="$HOME/.local/share/copilot-key"
+USER_BIN="$HOME/.local/bin"
+USER_DATA="$HOME/.local/share/copilot-key"
+USER_APPS="$HOME/.local/share/applications"
+USER_AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/copilot-key-setup.desktop"
+SYS_BIN="/usr/local/bin"
+SYS_DATA="/usr/local/share/copilot-key"
+SYS_APPS="/usr/local/share/applications"
+SYS_AUTOSTART="/etc/xdg/autostart/copilot-key-setup.desktop"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/copilot-key"
 KEYD_CONF="/etc/keyd/copilot.conf"
 SHORTCUT_NAME="Copilot key"
@@ -17,9 +23,21 @@ SHORTCUT_NAME="Copilot key"
 info() { printf '\033[1;36m==\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ok\033[0m %s\n' "$*"; }
 
+# Whatever is there goes - a machine may carry both a per-user install from
+# before and a system-wide one from later.
 info "$(t uninstall_launcher)"
-rm -f "$BIN_DIR/copilot-key" "$BIN_DIR/copilot-sound"
-rm -rf "$DATA_DIR"
+rm -f "$USER_BIN/copilot-key" "$USER_BIN/copilot-sound" "$USER_BIN/copilot-config"
+rm -f "$USER_APPS/copilot-key-config.desktop" "$USER_AUTOSTART"
+rm -rf "$USER_DATA"
+if [ -e "$SYS_BIN/copilot-key" ] || [ -d "$SYS_DATA" ] || [ -e "$SYS_AUTOSTART" ]; then
+    sudo rm -f "$SYS_BIN/copilot-key" "$SYS_BIN/copilot-sound" "$SYS_BIN/copilot-config"
+    sudo rm -f "$SYS_APPS/copilot-key-config.desktop" "$SYS_AUTOSTART"
+    sudo rm -rf "$SYS_DATA"
+    command -v update-desktop-database >/dev/null 2>&1 \
+        && sudo update-desktop-database "$SYS_APPS" >/dev/null 2>&1 || true
+fi
+command -v update-desktop-database >/dev/null 2>&1 \
+    && update-desktop-database "$USER_APPS" >/dev/null 2>&1 || true
 ok "$(t uninstall_files_gone)"
 
 read -rp "$(t uninstall_config_ask "$CONF_DIR")" answer
@@ -70,3 +88,4 @@ fi
 
 echo
 info "$(t uninstall_done)"
+echo "$(t uninstall_other_users)"

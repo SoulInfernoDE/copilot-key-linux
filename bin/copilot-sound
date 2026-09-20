@@ -3,8 +3,9 @@
 #
 # Usage: copilot-sound <cue-name> [volume 0.0-1.0]
 #
-# Cues live in $COPILOT_KEY_SOUND_DIR (default: ../sounds next to this script,
-# or ~/.local/share/copilot-key/sounds after a normal install).
+# Cues live in $COPILOT_KEY_SOUND_DIR; without it the usual places are tried:
+# the user's own share directory, /usr/local/share and /usr/share for a
+# system-wide install, and ../sounds next to this script in a git checkout.
 #
 # Playback must never block the caller and never fail loudly, so the whole
 # chain runs detached in the background. Every player is actually tried:
@@ -23,7 +24,11 @@ volume="${2:-1.0}"
 self_dir="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 sound_dir="${COPILOT_KEY_SOUND_DIR:-}"
 if [ -z "$sound_dir" ]; then
-    for candidate in "$HOME/.local/share/copilot-key/sounds" "$self_dir/../sounds"; do
+    for candidate in "$HOME/.local/share/copilot-key/sounds" \
+                     "/usr/local/share/copilot-key/sounds" \
+                     "/usr/share/copilot-key/sounds" \
+                     "$self_dir/../sounds" \
+                     "$self_dir/../share/copilot-key/sounds"; do
         [ -d "$candidate" ] && { sound_dir="$candidate"; break; }
     done
 fi

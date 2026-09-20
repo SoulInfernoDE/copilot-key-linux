@@ -1,0 +1,29 @@
+# Aurora - modern, multi-coloured 3D buttons.
+#
+# The palette gives every button its own colour, cycled through the wheel;
+# "glass" turns them into lit spheres with a highlight and a drop shadow.
+
+name = "Aurora 3D"
+author = "copilot-key"
+style = "glass"
+shape = "circle"
+
+# One colour per button. The wheel starts again at the top once it runs out.
+palette = [
+    "#FF6B6B",
+    "#FF9F45",
+    "#FFD23F",
+    "#5BCB77",
+    "#3FA7FF",
+    "#9B5DE5",
+    "#F15BB5",
+    "#00C2A8",
+]
+
+[colors]
+backdrop = "#070911"
+button = "#2A3150"
+edge = "#FFFFFF33"
+accent = "#5EC8FF"
+text = "#F4F7FF"
+text_dim = "#98A4C2"

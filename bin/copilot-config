@@ -1,0 +1,1307 @@
+#!/usr/bin/env python3
+"""copilot-config - set the Copilot-key menu up without editing a text file.
+
+Everything the menu shows is edited here: which entries exist, in which order,
+what each one looks like and what it starts. Applications are picked from the
+system's own .desktop files, so nobody has to know what a command line or a
+WM_CLASS is - choosing "Firefox" from a list fills all three fields at once.
+
+The launcher stays the single source of truth: this program imports
+bin/copilot-key and reuses its string catalogue, its icons and its config
+defaults. It also prints the shipped configuration templates
+(--print-template), which keeps the file's comments in exactly one place.
+
+Usage:  copilot-config [--print-template]
+"""
+
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SELF_DIR = Path(__file__).resolve().parent
+
+
+# ------------------------------------------------------ launcher import ----
+
+def load_launcher():
+    """Import bin/copilot-key as a module.
+
+    The launcher carries no .py suffix, so the loader has to be named
+    explicitly. Importing it is safe: everything at module level is a constant
+    or a pure function - the work only starts in its main().
+    """
+    path = SELF_DIR / "copilot-key"
+    if not path.is_file():
+        print(f"copilot-config: {path} not found", file=sys.stderr)
+        raise SystemExit(1)
+    loader = importlib.machinery.SourceFileLoader("copilot_key", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    loader.exec_module(module)
+    return module
+
+
+CK = load_launcher()
+tr = CK.tr
+
+
+
+# The launcher owns everything both programs need - the configuration writer,
+# the desktop-entry search and the window list. Importing it keeps exactly one
+# implementation of each.
+App = CK.App
+dump_config = CK.dump_config
+save_config = CK.save_config
+read_apps = CK.read_apps
+match_score = CK.match_score
+open_windows = CK.open_windows
+slugify = CK.slugify
+USER_HEADER = CK.USER_HEADER
+load_skin = CK.load_skin
+available_skins = CK.available_skins
+paint_button = CK.paint_button
+button_path = CK.button_path
+button_icon_rgba = CK.button_icon_rgba
+rounded_rect = CK.rounded_rect_path
+
+SKIN_GUIDE_URL = "https://github.com/SoulInfernoDE/copilot-key-linux/blob/main/docs/skins.md"
+
+
+
+def print_template() -> int:
+    """Print the shipped template for the current language (see config/)."""
+    variant = ""
+    if CK.LANG != "en":
+        name = CK.LANGUAGE_NAMES.get(CK.LANG, CK.LANG)
+        variant = f" ({name} labels)\nInstalled instead of config.toml when the locale is {name}."
+    sys.stdout.write(dump_config(CK.DEFAULT_CONFIG, CK.TEMPLATE_HEADER.format(variant=variant)))
+    return 0
+
+
+
+
+# --------------------------------------------------------------- gtk bits --
+
+Gtk = Gdk = GdkPixbuf = GLib = Pango = PangoCairo = None
+HAVE_CAIRO = False
+
+
+def init_gtk() -> bool:
+    global Gtk, Gdk, GdkPixbuf, GLib, Pango, PangoCairo, HAVE_CAIRO
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import Gdk as _Gdk
+        from gi.repository import GdkPixbuf as _GdkPixbuf
+        from gi.repository import GLib as _GLib
+        from gi.repository import Gtk as _Gtk
+        from gi.repository import Pango as _Pango
+        from gi.repository import PangoCairo as _PangoCairo
+    except (ImportError, ValueError) as exc:
+        CK.warn(tr("cfg_no_gtk", error=exc))
+        return False
+    Gtk, Gdk, GdkPixbuf, GLib = _Gtk, _Gdk, _GdkPixbuf, _GLib
+    Pango, PangoCairo = _Pango, _PangoCairo
+    CK.load_gtk()          # the launcher draws the preview with its own bridge
+    HAVE_CAIRO = CK.cairo_available()
+    return True
+
+
+CSS = b"""
+.cp-h1    { font-size: 15px; font-weight: 700; }
+.cp-dim   { font-size: 11px; opacity: 0.65; }
+.cp-badge { color: #D97757; font-weight: 700; }
+"""
+
+
+DARK_WORDS = ("Dark", "dark", "Darker", "darker")
+
+
+def theme_dirs() -> list[Path]:
+    dirs = [Path.home() / ".themes"]
+    home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    dirs.append(Path(home) / "themes")
+    raw = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    dirs += [Path(part) / "themes" for part in raw.split(":") if part]
+    dirs.append(Path("/usr/share/themes"))
+    return [d for d in dict.fromkeys(dirs) if d.is_dir()]
+
+
+def theme_exists(name: str) -> bool:
+    return bool(name) and any((d / name / "gtk-3.0").is_dir() for d in theme_dirs())
+
+
+def dark_variant(name: str) -> str:
+    """The dark twin of a GTK theme, if the system has one installed.
+
+    Mint and Yaru ship their dark versions as separate themes rather than
+    honouring gtk-application-prefer-dark-theme, and Mint puts the word in
+    the middle of its colour variants: Mint-Y-Aqua -> Mint-Y-Dark-Aqua.
+    """
+    parts = name.split("-")
+    if any(word in parts for word in DARK_WORDS):
+        return name if theme_exists(name) else ""
+    candidates = [f"{name}-Dark", f"{name}-dark"]
+    if len(parts) > 1:
+        candidates += ["-".join(parts[:-1] + ["Dark", parts[-1]]),
+                       "-".join(parts[:-1] + ["dark", parts[-1]])]
+    for candidate in candidates:
+        if theme_exists(candidate):
+            return candidate
+    return ""
+
+
+def light_variant(name: str) -> str:
+    candidate = "-".join(part for part in name.split("-") if part not in DARK_WORDS)
+    return candidate if theme_exists(candidate) else ""
+
+
+def desktop_theme() -> str:
+    for schema in ("org.cinnamon.desktop.interface", "org.gnome.desktop.interface"):
+        name = CK.run_out(["gsettings", "get", schema, "gtk-theme"]).strip().strip("'\"")
+        if name:
+            return name
+    return ""
+
+
+def desktop_prefers_dark() -> bool:
+    """What the desktop itself is set to, as far as it will tell us."""
+    scheme = CK.run_out(["gsettings", "get", "org.gnome.desktop.interface",
+                         "color-scheme"]).strip().strip("'\"")
+    if scheme == "prefer-dark":
+        return True
+    if scheme == "prefer-light":
+        return False
+    name = desktop_theme()
+    if not name:
+        settings = Gtk.Settings.get_default()
+        name = str(settings.get_property("gtk-theme-name") or "") if settings else ""
+    return "dark" in name.lower()
+
+
+def apply_theme(name: str) -> None:
+    """Dark, light, or whatever the desktop is using right now."""
+    settings = Gtk.Settings.get_default()
+    if settings is None:
+        return
+    wanted = str(name or "auto").lower()
+    # What GTK is actually using: in a session that is the desktop's own
+    # theme, handed over by XSettings, which beats anything we could guess.
+    current = str(settings.get_property("gtk-theme-name") or "") or desktop_theme()
+
+    if wanted == "auto":
+        desktop = desktop_theme()
+        if desktop and desktop != current:
+            settings.set_property("gtk-theme-name", desktop)   # undo an override
+        settings.set_property("gtk-application-prefer-dark-theme", desktop_prefers_dark())
+        return
+
+    dark = wanted == "dark"
+    settings.set_property("gtk-application-prefer-dark-theme", dark)
+    variant = dark_variant(current) if dark else light_variant(current)
+    if variant:
+        settings.set_property("gtk-theme-name", variant)
+
+
+def theme_rgba(widget):
+    context = widget.get_style_context()
+    color = context.get_color(context.get_state())
+    return (color.red, color.green, color.blue, color.alpha)
+
+
+def icon_area(get_name, size=20, get_rgba=None):
+    """A widget that paints one of the launcher's vector icons."""
+    area = Gtk.DrawingArea()
+    area.set_size_request(size + 8, size + 8)
+
+    def on_draw(widget, cr):
+        if not HAVE_CAIRO:
+            return False
+        cr.translate(widget.get_allocated_width() / 2, widget.get_allocated_height() / 2)
+        rgba = get_rgba() if get_rgba is not None else theme_rgba(widget)
+        CK.draw_icon(cr, get_name() or "sparkle", size, rgba)
+        return False
+
+    area.connect("draw", on_draw)
+    return area
+
+
+def draw_wheel_preview(cr, width, height, skin, actions, selected=-1,
+                       empty_text="") -> None:
+    """The wheel as the menu will draw it - same skin, same shapes."""
+    import math
+
+    rounded_rect(cr, 0.5, 0.5, width - 1, height - 1, 12)
+    cr.set_source_rgb(*skin.backdrop[:3])
+    cr.fill_preserve()
+    cr.set_source_rgba(*skin.text[:3], 0.08)
+    cr.set_line_width(1.0)
+    cr.stroke()
+
+    if not actions:
+        CK.draw_text(cr, empty_text, width / 2, height / 2, 13, False,
+                     (*skin.text_dim[:3], 0.9), max_width=width - 40)
+        return
+
+    count = len(actions)
+    cx, cy = width / 2.0, height / 2.0 - 14
+    radius = min(width, height) * 0.32
+    button = max(12.0, min(26.0, 2 * math.pi * radius / (count * 2.7)))
+
+    cr.set_source_rgba(*skin.text[:3], 0.07)
+    cr.set_line_width(1.0)
+    cr.new_path()
+    cr.arc(cx, cy, radius, 0, 2 * math.pi)
+    cr.stroke()
+
+    for index, action in enumerate(actions):
+        angle = -math.pi / 2 + index * 2 * math.pi / count
+        x, y = cx + math.cos(angle) * radius, cy + math.sin(angle) * radius
+        chosen = index == selected
+        paint_button(cr, skin, x, y, button, index, chosen, 1.0)
+        cr.save()
+        cr.translate(x, y)
+        CK.draw_icon(cr, CK.icon_for(action), button * 0.92,
+                     button_icon_rgba(skin, chosen, 1.0))
+        cr.restore()
+        if index < 9:
+            bx, by = x + button * 0.78, y - button * 0.78
+            cr.set_source_rgba(*skin.backdrop[:3], 0.95)
+            cr.new_path()
+            cr.arc(bx, by, 8.5, 0, 2 * math.pi)
+            cr.fill_preserve()
+            cr.set_source_rgba(*skin.accent[:3], 0.55)
+            cr.set_line_width(1.0)
+            cr.stroke()
+            CK.draw_text(cr, str(index + 1), bx, by, 9.5, True, (*skin.accent[:3], 1.0))
+
+    cr.set_source_rgba(*CK.shade(skin.button, 0.78)[:3], 0.92)
+    button_path(cr, skin, cx, cy, button * 0.8)
+    cr.fill_preserve()
+    cr.set_source_rgba(*skin.text[:3], 0.07)
+    cr.set_line_width(1.0)
+    cr.stroke()
+    cr.save()
+    cr.translate(cx, cy)
+    CK.draw_icon(cr, "sparkle", button * 0.7, (*skin.accent[:3], 0.85))
+    cr.restore()
+
+    if 0 <= selected < len(actions):
+        label = str(actions[selected].get("label") or tr("cfg_new_entry"))
+        CK.draw_text(cr, label, width / 2, height - 18, 12.5, True,
+                     (*skin.text[:3], 0.92), max_width=width - 30)
+
+
+def app_image(app):
+    """The application's own icon, straight from the system icon theme."""
+    image = Gtk.Image()
+    name = app.icon_name
+    if name.startswith("/"):
+        try:
+            image.set_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_size(name, 32, 32))
+            return image
+        except Exception:
+            name = ""
+    theme = Gtk.IconTheme.get_default()
+    if not name or not theme.has_icon(name):
+        name = "application-x-executable"
+    image.set_from_icon_name(name, Gtk.IconSize.DND)
+    return image
+
+
+# --------------------------------------------------------------- editor ----
+
+NEW_ACTION = {
+    "id": "", "label": "", "subtitle": "", "command": "",
+    "icon": "sparkle", "window_class": "", "primary": False,
+}
+
+
+class Editor:
+    """The window: entries on the left, the selected entry's fields right."""
+
+    def __init__(self) -> None:
+        cfg = CK.load_config()
+        self.general = dict(cfg["general"])
+        self.actions = [dict(action) for action in cfg["actions"]]
+        self.selected = 0
+        self.dirty = False
+        self.loading = False
+        self.apps: list[App] | None = None
+        self.preview_dir: Path | None = None
+        self.rows: list[dict] = []
+        self.status_timer = 0
+        self.skin = load_skin(self.general.get("menu_skin", "terracotta"))
+        self.skin_preview = None
+
+    # -- helpers ------------------------------------------------------------
+
+    def current(self) -> dict:
+        if not self.actions:
+            return {}
+        self.selected = max(0, min(self.selected, len(self.actions) - 1))
+        return self.actions[self.selected]
+
+    def mark_dirty(self) -> None:
+        self.dirty = True
+        self.save_button.set_sensitive(True)
+
+    def notify(self, message: str) -> None:
+        self.status.set_text(message)
+        if self.status_timer:
+            GLib.source_remove(self.status_timer)
+        self.status_timer = GLib.timeout_add_seconds(6, self.clear_status)
+
+    def clear_status(self) -> bool:
+        self.status.set_text("")
+        self.status_timer = 0
+        return False
+
+    # -- construction -------------------------------------------------------
+
+    def build(self) -> None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        self.win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        self.win.set_title(tr("cfg_title"))
+        self.win.set_default_size(920, 620)
+        self.win.set_position(Gtk.WindowPosition.CENTER)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.win.add(outer)
+
+        notebook = Gtk.Notebook()
+        notebook.set_border_width(10)
+        notebook.append_page(self.build_menu_page(), Gtk.Label(label=tr("cfg_tab_menu")))
+        notebook.append_page(self.build_skin_page(), Gtk.Label(label=tr("cfg_tab_skin")))
+        notebook.append_page(self.build_behaviour_page(), Gtk.Label(label=tr("cfg_tab_behaviour")))
+        outer.pack_start(notebook, True, True, 0)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.set_border_width(10)
+        test = Gtk.Button(label=tr("cfg_test"))
+        test.set_tooltip_text(tr("cfg_test_hint"))
+        test.connect("clicked", self.on_test)
+        bar.pack_start(test, False, False, 0)
+        self.status = Gtk.Label(label="", xalign=0.0)
+        self.status.get_style_context().add_class("cp-dim")
+        self.status.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        bar.pack_start(self.status, True, True, 6)
+        close = Gtk.Button(label=tr("cfg_close"))
+        close.connect("clicked", self.on_close)
+        bar.pack_start(close, False, False, 0)
+        self.save_button = Gtk.Button(label=tr("cfg_save"))
+        self.save_button.get_style_context().add_class("suggested-action")
+        self.save_button.set_sensitive(False)
+        self.save_button.connect("clicked", self.on_save)
+        bar.pack_start(self.save_button, False, False, 0)
+        outer.pack_start(bar, False, False, 0)
+
+        self.win.connect("delete-event", self.on_delete)
+        self.win.connect("key-press-event", self.on_key)
+        self.rebuild_list()
+        self.win.show_all()
+
+    def build_menu_page(self) -> "Gtk.Widget":
+        page = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        page.set_border_width(12)
+
+        # --- left: the entries, in menu order --------------------------------
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left.set_size_request(290, -1)
+        heading = Gtk.Label(label=tr("cfg_entries"), xalign=0.0)
+        heading.get_style_context().add_class("cp-h1")
+        left.pack_start(heading, False, False, 0)
+        hint = Gtk.Label(label=tr("cfg_entries_hint"), xalign=0.0)
+        hint.get_style_context().add_class("cp-dim")
+        hint.set_line_wrap(True)
+        left.pack_start(hint, False, False, 0)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        self.list = Gtk.ListBox()
+        self.list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+        self.list.connect("row-selected", self.on_row_selected)
+        scroller.add(self.list)
+        left.pack_start(scroller, True, True, 0)
+
+        tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        add = Gtk.Button(label=tr("cfg_add"))
+        add.set_image(Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON))
+        add.set_always_show_image(True)
+        add.connect("clicked", self.on_add)
+        tools.pack_start(add, False, False, 0)
+        remove = Gtk.Button(label=tr("cfg_remove"))
+        remove.set_image(Gtk.Image.new_from_icon_name("list-remove-symbolic", Gtk.IconSize.BUTTON))
+        remove.set_always_show_image(True)
+        remove.connect("clicked", self.on_remove)
+        tools.pack_start(remove, False, False, 0)
+        # pack_end fills from the right, so down goes in before up.
+        for icon_name, tooltip, delta in (("go-down-symbolic", tr("cfg_down"), 1),
+                                          ("go-up-symbolic", tr("cfg_up"), -1)):
+            button = Gtk.Button.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON)
+            button.set_tooltip_text(tooltip)
+            button.connect("clicked", self.on_move, delta)
+            tools.pack_end(button, False, False, 0)
+        left.pack_start(tools, False, False, 0)
+        page.pack_start(left, False, False, 0)
+
+        # --- right: preview on top, the fields below -------------------------
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        if HAVE_CAIRO:
+            self.preview = Gtk.DrawingArea()
+            self.preview.set_size_request(-1, 230)
+            self.preview.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            self.preview.connect("draw", self.on_draw_preview)
+            self.preview.connect("button-press-event", self.on_preview_click)
+            right.pack_start(self.preview, False, False, 0)
+        else:
+            self.preview = Gtk.Label(label=tr("warn_no_cairo"), xalign=0.0)
+            self.preview.set_line_wrap(True)
+            self.preview.get_style_context().add_class("cp-dim")
+            right.pack_start(self.preview, False, False, 0)
+
+        form = Gtk.Grid(column_spacing=10, row_spacing=8)
+        row = 0
+
+        pick = Gtk.Button(label=tr("cfg_pick_app"))
+        pick.set_image(Gtk.Image.new_from_icon_name("system-search-symbolic", Gtk.IconSize.BUTTON))
+        pick.set_always_show_image(True)
+        pick.connect("clicked", self.on_pick_app)
+        form.attach(pick, 0, row, 1, 1)
+        pick_hint = Gtk.Label(label=tr("cfg_pick_app_hint"), xalign=0.0)
+        pick_hint.get_style_context().add_class("cp-dim")
+        pick_hint.set_line_wrap(True)
+        form.attach(pick_hint, 1, row, 1, 1)
+        row += 1
+
+        self.entry_label = self.attach_entry(form, row, tr("cfg_field_name"), "label")
+        row += 1
+        self.entry_subtitle = self.attach_entry(form, row, tr("cfg_field_desc"), "subtitle")
+        row += 1
+
+        icon_label = Gtk.Label(label=tr("cfg_field_icon"), xalign=1.0)
+        form.attach(icon_label, 0, row, 1, 1)
+        icons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.icon_buttons = {}
+        for name in CK.ICON_NAMES:
+            button = Gtk.ToggleButton()
+            button.set_tooltip_text(name)
+            button.add(icon_area(
+                (lambda n: lambda: n)(name), 20,
+                get_rgba=(lambda b: lambda: (CK.ACCENT + (1.0,)) if b.get_active()
+                          else theme_rgba(b))(button),
+            ))
+            button.connect("toggled", self.on_icon_toggled, name)
+            self.icon_buttons[name] = button
+            icons.pack_start(button, False, False, 0)
+        form.attach(icons, 1, row, 1, 1)
+        row += 1
+
+        self.check_primary = Gtk.CheckButton(label=tr("cfg_primary"))
+        self.check_primary.set_tooltip_text(tr("cfg_primary_hint"))
+        self.check_primary.connect("toggled", self.on_primary_toggled)
+        form.attach(self.check_primary, 1, row, 1, 1)
+        row += 1
+
+        expander = Gtk.Expander(label=tr("cfg_advanced"))
+        advanced = Gtk.Grid(column_spacing=10, row_spacing=8)
+        advanced.set_margin_top(8)
+        advanced.set_margin_start(6)
+        self.entry_command = self.attach_entry(advanced, 0, tr("cfg_field_command"), "command")
+        command_hint = Gtk.Label(label=tr("cfg_field_command_hint"), xalign=0.0)
+        command_hint.get_style_context().add_class("cp-dim")
+        command_hint.set_line_wrap(True)
+        advanced.attach(command_hint, 1, 1, 1, 1)
+        self.entry_class = self.attach_entry(advanced, 2, tr("cfg_field_class"), "window_class")
+        detect = Gtk.Button(label=tr("cfg_pick_window"))
+        detect.connect("clicked", self.on_pick_window)
+        advanced.attach(detect, 1, 3, 1, 1)
+        class_hint = Gtk.Label(label=tr("cfg_field_class_hint"), xalign=0.0)
+        class_hint.get_style_context().add_class("cp-dim")
+        class_hint.set_line_wrap(True)
+        advanced.attach(class_hint, 1, 4, 1, 1)
+        expander.add(advanced)
+        form.attach(expander, 0, row, 2, 1)
+
+        def on_expanded(widget, _param) -> None:
+            # Scroll the freshly revealed fields into view; the new height is
+            # only known once GTK has laid the section out.
+            if not widget.get_expanded():
+                return
+            def to_bottom() -> bool:
+                adjustment = right_scroller.get_vadjustment()
+                adjustment.set_value(adjustment.get_upper())
+                return False
+            GLib.timeout_add(120, to_bottom)
+
+        expander.connect("notify::expanded", on_expanded)
+
+        right.pack_start(form, False, False, 0)
+
+        # The fields grow when "Advanced" is open - scroll rather than push
+        # the buttons off a small screen.
+        right_scroller = Gtk.ScrolledWindow()
+        right_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        right_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        right_scroller.add(right)
+        page.pack_start(right_scroller, True, True, 0)
+        return page
+
+    def attach_entry(self, grid, row: int, label: str, field: str):
+        caption = Gtk.Label(label=label, xalign=1.0)
+        grid.attach(caption, 0, row, 1, 1)
+        entry = Gtk.Entry()
+        entry.set_hexpand(True)
+        entry.connect("changed", self.on_entry_changed, field)
+        grid.attach(entry, 1, row, 1, 1)
+        return entry
+
+    def build_behaviour_page(self) -> "Gtk.Widget":
+        self.loading = True
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        page.set_border_width(14)
+
+        heading = Gtk.Label(label=tr("cfg_tab_behaviour"), xalign=0.0)
+        heading.get_style_context().add_class("cp-h1")
+        page.pack_start(heading, False, False, 0)
+        hint = Gtk.Label(label=tr("cfg_behaviour_hint"), xalign=0.0)
+        hint.get_style_context().add_class("cp-dim")
+        hint.set_line_wrap(True)
+        page.pack_start(hint, False, False, 0)
+
+        grid = Gtk.Grid(column_spacing=12, row_spacing=10)
+        grid.set_margin_top(6)
+        row = 0
+
+        sounds = Gtk.CheckButton(label=tr("cfg_gen_sounds"))
+        sounds.set_active(bool(self.general.get("sounds", True)))
+        sounds.connect("toggled", self.on_general_toggle, "sounds")
+        grid.attach(sounds, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_volume"), xalign=1.0), 0, row, 1, 1)
+        volume = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.05)
+        volume.set_value(float(self.general.get("volume", 0.7)))
+        volume.set_digits(2)
+        volume.set_hexpand(True)
+        volume.connect("value-changed", self.on_general_scale, "volume")
+        grid.attach(volume, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_double"), xalign=1.0), 0, row, 1, 1)
+        double = Gtk.SpinButton.new_with_range(150, 2000, 50)
+        double.set_value(int(self.general.get("double_press_ms", 450)))
+        double.set_tooltip_text(tr("cfg_gen_double_hint"))
+        double.connect("value-changed", self.on_general_spin, "double_press_ms")
+        grid.attach(double, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_single"), xalign=1.0), 0, row, 1, 1)
+        single = Gtk.ComboBoxText()
+        for value in ("toggle_or_menu", "toggle", "menu"):
+            single.append(value, tr(f"cfg_single_{value}"))
+        single.set_active_id(str(self.general.get("single_press", "toggle_or_menu")))
+        single.connect("changed", self.on_general_combo, "single_press")
+        grid.attach(single, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_title"), xalign=1.0), 0, row, 1, 1)
+        title = Gtk.Entry()
+        title.set_text(str(self.general.get("menu_title", tr("menu_title"))))
+        title.set_hexpand(True)
+        title.connect("changed", self.on_general_entry, "menu_title")
+        grid.attach(title, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_style"), xalign=1.0), 0, row, 1, 1)
+        style = Gtk.ComboBoxText()
+        for value in ("radial", "list"):
+            style.append(value, tr(f"cfg_style_{value}"))
+        style.set_active_id(str(self.general.get("menu_style", "radial")))
+        style.connect("changed", self.on_general_combo, "menu_style")
+        grid.attach(style, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_dim"), xalign=1.0), 0, row, 1, 1)
+        dim = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.02)
+        dim.set_value(float(self.general.get("dim_opacity", 0.62)))
+        dim.set_digits(2)
+        dim.set_hexpand(True)
+        dim.connect("value-changed", self.on_general_scale, "dim_opacity")
+        grid.attach(dim, 1, row, 1, 1)
+        row += 1
+
+        grid.attach(Gtk.Label(label=tr("cfg_gen_theme"), xalign=1.0), 0, row, 1, 1)
+        theme = Gtk.ComboBoxText()
+        for value in ("auto", "dark", "light"):
+            theme.append(value, tr(f"cfg_theme_{value}"))
+        theme.set_active_id(str(self.general.get("editor_theme", "auto")))
+        theme.connect("changed", self.on_theme_changed)
+        grid.attach(theme, 1, row, 1, 1)
+        row += 1
+
+        focus = Gtk.CheckButton(label=tr("cfg_gen_focus"))
+        focus.set_active(bool(self.general.get("close_on_focus_loss", True)))
+        focus.connect("toggled", self.on_general_toggle, "close_on_focus_loss")
+        grid.attach(focus, 1, row, 1, 1)
+
+        page.pack_start(grid, False, False, 0)
+        self.loading = False
+        return page
+
+    def build_skin_page(self) -> "Gtk.Widget":
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        page.set_border_width(12)
+
+        heading = Gtk.Label(label=tr("cfg_tab_skin"), xalign=0.0)
+        heading.get_style_context().add_class("cp-h1")
+        page.pack_start(heading, False, False, 0)
+        hint = Gtk.Label(label=tr("cfg_skin_hint"), xalign=0.0)
+        hint.get_style_context().add_class("cp-dim")
+        hint.set_line_wrap(True)
+        page.pack_start(hint, False, False, 0)
+
+        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        page.pack_start(columns, True, True, 0)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        scroller.set_size_request(280, -1)
+        self.skin_list = Gtk.ListBox()
+        self.skin_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+        current = str(self.general.get("menu_skin", "terracotta"))
+        chosen_row = None
+        for skin_id, skin in available_skins().items():
+            row = Gtk.ListBoxRow()
+            row.skin_id = skin_id             # type: ignore[attr-defined]
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            box.set_border_width(7)
+            name = Gtk.Label(label=skin.name, xalign=0.0)
+            box.pack_start(name, False, False, 0)
+            detail = skin.style
+            if skin.author:
+                detail = f"{skin.style} \u00b7 {tr('cfg_skin_by', author=skin.author)}"
+            sub = Gtk.Label(label=detail, xalign=0.0)
+            sub.get_style_context().add_class("cp-dim")
+            box.pack_start(sub, False, False, 0)
+            row.add(box)
+            self.skin_list.add(row)
+            if skin_id == current:
+                chosen_row = row
+        self.skin_list.connect("row-selected", self.on_skin_selected)
+        scroller.add(self.skin_list)
+        columns.pack_start(scroller, False, False, 0)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        if HAVE_CAIRO:
+            self.skin_preview = Gtk.DrawingArea()
+            self.skin_preview.set_size_request(-1, 260)
+            self.skin_preview.connect("draw", self.on_draw_skin_preview)
+            right.pack_start(self.skin_preview, True, True, 0)
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        guide = Gtk.Button(label=tr("cfg_skin_guide"))
+        guide.connect("clicked", self.on_skin_guide)
+        buttons.pack_start(guide, False, False, 0)
+        folder = Gtk.Button(label=tr("cfg_skin_folder"))
+        folder.connect("clicked", self.on_skin_folder)
+        buttons.pack_start(folder, False, False, 0)
+        right.pack_start(buttons, False, False, 0)
+        columns.pack_start(right, True, True, 0)
+
+        if chosen_row is not None:
+            self.loading = True
+            self.skin_list.select_row(chosen_row)
+            self.loading = False
+        return page
+
+    def on_draw_skin_preview(self, widget, cr) -> bool:
+        draw_wheel_preview(cr, widget.get_allocated_width(), widget.get_allocated_height(),
+                           self.skin, self.actions, self.selected,
+                           empty_text=tr("cfg_preview_empty"))
+        return False
+
+    def on_skin_selected(self, _listbox, row) -> None:
+        if row is None:
+            return
+        self.skin = load_skin(row.skin_id)
+        if self.loading:
+            return
+        self.general["menu_skin"] = row.skin_id
+        self.mark_dirty()
+        self.queue_preview()
+
+    def on_skin_guide(self, *_args) -> None:
+        """The format is documented in the repository - open it either way."""
+        target = SKIN_GUIDE_URL
+        for base in [CK.PROJECT_DIR, *CK.data_dirs()]:
+            candidate = Path(base) / "docs" / "skins.md"
+            if candidate.is_file():
+                target = str(candidate)
+                break
+        self.open_externally(target)
+
+    def on_skin_folder(self, *_args) -> None:
+        folder = CK.config_path().parent / "skins"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.notify(tr("cfg_save_failed", error=exc))
+            return
+        self.open_externally(str(folder))
+
+    def open_externally(self, target: str) -> None:
+        try:
+            subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as exc:
+            self.notify(tr("cfg_save_failed", error=exc))
+
+    # -- the entry list -----------------------------------------------------
+
+    def make_row(self, index: int, action: dict):
+        row = Gtk.ListBoxRow()
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        line.set_border_width(6)
+
+        number = Gtk.Label(label=str(index + 1) if index < 9 else "\u00b7")
+        number.get_style_context().add_class("cp-badge")
+        number.set_size_request(14, -1)
+        line.pack_start(number, False, False, 0)
+
+        icon = icon_area((lambda a: lambda: CK.icon_for(a))(action), 20)
+        line.pack_start(icon, False, False, 0)
+
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        label = Gtk.Label(label=str(action.get("label") or tr("cfg_new_entry")), xalign=0.0)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        text.pack_start(label, False, False, 0)
+        sub = Gtk.Label(label=str(action.get("subtitle", "")), xalign=0.0)
+        sub.get_style_context().add_class("cp-dim")
+        sub.set_ellipsize(Pango.EllipsizeMode.END)
+        text.pack_start(sub, False, False, 0)
+        line.pack_start(text, True, True, 0)
+
+        star = Gtk.Label(label="\u2605")
+        star.get_style_context().add_class("cp-badge")
+        star.set_tooltip_text(tr("cfg_primary"))
+        star.set_no_show_all(True)
+        star.set_visible(bool(action.get("primary")))
+        line.pack_end(star, False, False, 0)
+
+        row.add(line)
+        self.rows.append({"label": label, "sub": sub, "icon": icon, "star": star})
+        return row
+
+    def rebuild_list(self) -> None:
+        self.loading = True
+        for child in self.list.get_children():
+            self.list.remove(child)
+        self.rows = []
+        for index, action in enumerate(self.actions):
+            self.list.add(self.make_row(index, action))
+        self.list.show_all()
+        if self.actions:
+            self.selected = max(0, min(self.selected, len(self.actions) - 1))
+            row = self.list.get_row_at_index(self.selected)
+            if row is not None:
+                self.list.select_row(row)
+        self.loading = False
+        self.load_form()
+        self.queue_preview()
+
+    def refresh_row(self, index: int) -> None:
+        if not (0 <= index < len(self.rows) and index < len(self.actions)):
+            return
+        action = self.actions[index]
+        widgets = self.rows[index]
+        widgets["label"].set_text(str(action.get("label") or tr("cfg_new_entry")))
+        widgets["sub"].set_text(str(action.get("subtitle", "")))
+        widgets["icon"].queue_draw()
+        widgets["star"].set_visible(bool(action.get("primary")))
+
+    def queue_preview(self) -> None:
+        if not HAVE_CAIRO:
+            return
+        self.preview.queue_draw()
+        if self.skin_preview is not None:
+            self.skin_preview.queue_draw()
+
+    def load_form(self) -> None:
+        action = self.current()
+        self.loading = True
+        self.entry_label.set_text(str(action.get("label", "")))
+        self.entry_subtitle.set_text(str(action.get("subtitle", "")))
+        self.entry_command.set_text(str(action.get("command", "")))
+        self.entry_class.set_text(str(action.get("window_class", "")))
+        icon = CK.icon_for(action) if action else "sparkle"
+        for name, button in self.icon_buttons.items():
+            button.set_active(name == icon)
+            child = button.get_child()
+            if child is not None:
+                child.queue_draw()
+        self.check_primary.set_active(bool(action.get("primary")))
+        for widget in (self.entry_label, self.entry_subtitle, self.entry_command,
+                       self.entry_class, self.check_primary):
+            widget.set_sensitive(bool(self.actions))
+        self.loading = False
+
+    # -- edits --------------------------------------------------------------
+
+    def on_row_selected(self, _listbox, row) -> None:
+        if self.loading or row is None:
+            return
+        self.selected = row.get_index()
+        self.load_form()
+        self.queue_preview()
+
+    def on_entry_changed(self, entry, field: str) -> None:
+        if self.loading or not self.actions:
+            return
+        self.current()[field] = entry.get_text()
+        self.mark_dirty()
+        self.refresh_row(self.selected)
+        self.queue_preview()
+
+    def on_icon_toggled(self, button, name: str) -> None:
+        if self.loading or not self.actions:
+            return
+        child = button.get_child()
+        if child is not None:
+            child.queue_draw()
+        if not button.get_active():
+            # The icons behave like radio buttons: one is always set.
+            if CK.icon_for(self.current()) == name:
+                self.loading = True
+                button.set_active(True)
+                self.loading = False
+            return
+        self.current()["icon"] = name
+        self.loading = True
+        for other, other_button in self.icon_buttons.items():
+            if other != name and other_button.get_active():
+                other_button.set_active(False)
+                other_child = other_button.get_child()
+                if other_child is not None:
+                    other_child.queue_draw()
+        self.loading = False
+        self.mark_dirty()
+        self.refresh_row(self.selected)
+        self.queue_preview()
+
+    def on_primary_toggled(self, button) -> None:
+        if self.loading or not self.actions:
+            return
+        if not button.get_active():
+            # Exactly one entry answers a single press, so it cannot be unset.
+            self.loading = True
+            button.set_active(True)
+            self.loading = False
+            return
+        for index, action in enumerate(self.actions):
+            action["primary"] = index == self.selected
+            self.refresh_row(index)
+        self.mark_dirty()
+
+    def on_general_toggle(self, button, key: str) -> None:
+        if self.loading:
+            return
+        self.general[key] = bool(button.get_active())
+        self.mark_dirty()
+
+    def on_general_scale(self, scale, key: str) -> None:
+        if self.loading:
+            return
+        self.general[key] = round(float(scale.get_value()), 2)
+        self.mark_dirty()
+
+    def on_general_spin(self, spin, key: str) -> None:
+        if self.loading:
+            return
+        self.general[key] = int(spin.get_value())
+        self.mark_dirty()
+
+    def on_general_combo(self, combo, key: str) -> None:
+        if self.loading:
+            return
+        value = combo.get_active_id()
+        if value:
+            self.general[key] = value
+            self.mark_dirty()
+
+    def on_theme_changed(self, combo) -> None:
+        value = combo.get_active_id()
+        if not value:
+            return
+        apply_theme(value)          # show it straight away
+        if self.loading:
+            return
+        self.general["editor_theme"] = value
+        self.mark_dirty()
+
+    def on_general_entry(self, entry, key: str) -> None:
+        if self.loading:
+            return
+        self.general[key] = entry.get_text()
+        self.mark_dirty()
+
+    def on_add(self, *_args) -> None:
+        action = dict(NEW_ACTION)
+        action["label"] = tr("cfg_new_entry")
+        self.actions.append(action)
+        self.selected = len(self.actions) - 1
+        self.mark_dirty()
+        self.rebuild_list()
+        if len(self.actions) > 9:
+            self.notify(tr("cfg_too_many"))
+        # A new entry without an app is useless - go straight to the chooser.
+        self.on_pick_app()
+
+    def on_remove(self, *_args) -> None:
+        if len(self.actions) <= 1:
+            self.notify(tr("cfg_keep_one"))
+            return
+        del self.actions[self.selected]
+        self.selected = max(0, self.selected - 1)
+        self.mark_dirty()
+        self.rebuild_list()
+
+    def on_move(self, _button, delta: int) -> None:
+        target = self.selected + delta
+        if not self.actions or not 0 <= target < len(self.actions):
+            return
+        index = self.selected
+        self.actions[index], self.actions[target] = self.actions[target], self.actions[index]
+        self.selected = target
+        self.mark_dirty()
+        self.rebuild_list()
+
+    # -- preview ------------------------------------------------------------
+
+    def preview_geometry(self, width: int, height: int):
+        import math
+
+        count = max(1, len(self.actions))
+        cx, cy = width / 2.0, height / 2.0 - 14
+        radius = min(width, height) * 0.32
+        button = max(12.0, min(26.0, 2 * math.pi * radius / (count * 2.7)))
+        return cx, cy, radius, button, count
+
+    def on_draw_preview(self, widget, cr) -> bool:
+        draw_wheel_preview(cr, widget.get_allocated_width(), widget.get_allocated_height(),
+                           self.skin, self.actions, self.selected,
+                           empty_text=tr("cfg_preview_empty"))
+        return False
+
+    def on_preview_click(self, _widget, event) -> bool:
+        import math
+
+        width = self.preview.get_allocated_width()
+        height = self.preview.get_allocated_height()
+        cx, cy, radius, button, count = self.preview_geometry(width, height)
+        for index in range(len(self.actions)):
+            angle = -math.pi / 2 + index * 2 * math.pi / count
+            x, y = cx + math.cos(angle) * radius, cy + math.sin(angle) * radius
+            if (event.x - x) ** 2 + (event.y - y) ** 2 <= (button * 1.3) ** 2:
+                row = self.list.get_row_at_index(index)
+                if row is not None:
+                    self.list.select_row(row)
+                break
+        return True
+
+    # -- choosers -----------------------------------------------------------
+
+    def on_pick_app(self, *_args) -> None:
+        if not self.actions:
+            return
+        if self.apps is None:
+            self.apps = read_apps()
+
+        dialog = Gtk.Dialog(title=tr("cfg_apps_title"), transient_for=self.win, modal=True)
+        dialog.add_button(tr("cfg_cancel"), Gtk.ResponseType.CANCEL)
+        use = dialog.add_button(tr("cfg_use"), Gtk.ResponseType.OK)
+        use.get_style_context().add_class("suggested-action")
+        dialog.set_default_size(560, 540)
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_border_width(12)
+
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text(tr("cfg_apps_search"))
+        content.pack_start(search, False, False, 0)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.BROWSE)
+        scroller.add(listbox)
+        content.pack_start(scroller, True, True, 0)
+
+        empty = Gtk.Label(label=tr("cfg_apps_none"), xalign=0.0)
+        empty.get_style_context().add_class("cp-dim")
+        empty.set_no_show_all(True)
+        content.pack_start(empty, False, False, 0)
+
+        # All rows are built once; searching only re-filters and re-sorts them.
+        for app in self.apps:
+            row = Gtk.ListBoxRow()
+            row.app = app                     # type: ignore[attr-defined]
+            row.score = 5                     # type: ignore[attr-defined]
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            line.set_border_width(6)
+            line.pack_start(app_image(app), False, False, 0)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            name = Gtk.Label(label=app.name, xalign=0.0)
+            name.set_ellipsize(Pango.EllipsizeMode.END)
+            text.pack_start(name, False, False, 0)
+            if app.comment:
+                comment = Gtk.Label(label=app.comment, xalign=0.0)
+                comment.get_style_context().add_class("cp-dim")
+                comment.set_ellipsize(Pango.EllipsizeMode.END)
+                text.pack_start(comment, False, False, 0)
+            line.pack_start(text, True, True, 0)
+            row.add(line)
+            listbox.add(row)
+
+        listbox.set_filter_func(lambda row: row.score >= 0)
+        listbox.set_sort_func(lambda a, b: (a.score - b.score)
+                              or (-1 if a.app.name.lower() < b.app.name.lower() else 1))
+
+        def on_search(entry) -> None:
+            query = entry.get_text().strip().lower()
+            best = None
+            matches = 0
+            for row in listbox.get_children():
+                row.score = match_score(row.app, query)
+                if row.score < 0:
+                    continue
+                matches += 1
+                if best is None or (row.score, row.app.name.lower()) < \
+                        (best.score, best.app.name.lower()):
+                    best = row
+            listbox.invalidate_filter()
+            listbox.invalidate_sort()
+            empty.set_visible(matches == 0)
+            # Pick the winner ourselves: invalidate_sort() only queues the
+            # re-sort, so asking the list for its first row still answers in
+            # the old order - and a filtered-away row would stay selected.
+            if best is not None:
+                listbox.select_row(best)
+            else:
+                listbox.unselect_all()
+
+        search.connect("search-changed", on_search)
+        search.connect("activate", lambda *_a: dialog.response(Gtk.ResponseType.OK))
+        listbox.connect("row-activated", lambda *_a: dialog.response(Gtk.ResponseType.OK))
+
+        dialog.show_all()
+        empty.hide()
+        on_search(search)
+        search.grab_focus()
+        response = dialog.run()
+        row = listbox.get_selected_row()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and row is not None and row.score >= 0:
+            self.apply_app(row.app)
+
+    def apply_app(self, app: App) -> None:
+        """Fill label, description, command, window class and icon in one go."""
+        action = self.current()
+        action["id"] = slugify(app.name) or action.get("id", "")
+        action["label"] = app.name
+        action["subtitle"] = app.comment
+        action["command"] = f"@terminal {app.command}" if app.terminal else app.command
+        action["window_class"] = app.window_class
+        action["icon"] = app.icon
+        self.mark_dirty()
+        self.load_form()
+        self.refresh_row(self.selected)
+        self.queue_preview()
+
+    def on_pick_window(self, *_args) -> None:
+        if not self.actions:
+            return
+        windows = open_windows()
+
+        dialog = Gtk.Dialog(title=tr("cfg_windows_title"), transient_for=self.win, modal=True)
+        dialog.add_button(tr("cfg_cancel"), Gtk.ResponseType.CANCEL)
+        use = dialog.add_button(tr("cfg_use"), Gtk.ResponseType.OK)
+        use.get_style_context().add_class("suggested-action")
+        dialog.set_default_size(460, 380)
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_border_width(12)
+
+        hint = Gtk.Label(label=tr("cfg_windows_hint"), xalign=0.0)
+        hint.get_style_context().add_class("cp-dim")
+        hint.set_line_wrap(True)
+        content.pack_start(hint, False, False, 0)
+
+        if not windows:
+            content.pack_start(Gtk.Label(label=tr("cfg_windows_none"), xalign=0.0), False, False, 0)
+            use.set_sensitive(False)
+            listbox = None
+        else:
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_shadow_type(Gtk.ShadowType.IN)
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.BROWSE)
+            for wm_class, title in windows:
+                row = Gtk.ListBoxRow()
+                row.wm_class = wm_class       # type: ignore[attr-defined]
+                text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+                text.set_border_width(6)
+                label = Gtk.Label(label=title or wm_class, xalign=0.0)
+                label.set_ellipsize(Pango.EllipsizeMode.END)
+                text.pack_start(label, False, False, 0)
+                klass = Gtk.Label(label=wm_class, xalign=0.0)
+                klass.get_style_context().add_class("cp-dim")
+                text.pack_start(klass, False, False, 0)
+                row.add(text)
+                listbox.add(row)
+            scroller.add(listbox)
+            content.pack_start(scroller, True, True, 0)
+            listbox.connect("row-activated", lambda *_a: dialog.response(Gtk.ResponseType.OK))
+
+        dialog.show_all()
+        response = dialog.run()
+        row = listbox.get_selected_row() if listbox is not None else None
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and row is not None:
+            self.current()["window_class"] = row.wm_class
+            self.load_form()
+            self.mark_dirty()
+
+    # -- save, test, close --------------------------------------------------
+
+    def collect(self) -> dict:
+        """The edited state as a configuration, ids and primary normalised."""
+        return CK.normalise_config(self.general, self.actions)
+
+    def on_save(self, *_args) -> bool:
+        cfg = self.collect()
+        try:
+            path = save_config(cfg)
+        except OSError as exc:
+            self.notify(tr("cfg_save_failed", error=exc))
+            return False
+        self.actions = cfg["actions"]      # show what was actually written
+        self.general = cfg["general"]
+        self.dirty = False
+        self.save_button.set_sensitive(False)
+        self.rebuild_list()
+        self.notify(tr("cfg_saved", path=path))
+        return True
+
+    def on_test(self, *_args) -> None:
+        """Open the real menu on the current state, saved or not.
+
+        The unsaved configuration goes into a throwaway XDG_CONFIG_HOME, so
+        the menu the user sees is the genuine one without touching the file.
+        """
+        if self.preview_dir is None:
+            self.preview_dir = Path(tempfile.mkdtemp(prefix="copilot-key-test-"))
+        target = self.preview_dir / "copilot-key" / "config.toml"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(dump_config(self.collect(), USER_HEADER), encoding="utf-8")
+            subprocess.Popen(
+                [sys.executable, str(SELF_DIR / "copilot-key"), "menu"],
+                env=dict(os.environ, XDG_CONFIG_HOME=str(self.preview_dir)),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self.notify(tr("cfg_test_failed", error=exc))
+
+    def on_key(self, _widget, event) -> bool:
+        name = Gdk.keyval_name(event.keyval) or ""
+        if event.state & Gdk.ModifierType.CONTROL_MASK and name in ("s", "S"):
+            self.on_save()
+            return True
+        if name == "Escape":
+            self.on_close()
+            return True
+        return False
+
+    def on_close(self, *_args) -> None:
+        if self.finish():
+            self.win.destroy()
+
+    def on_delete(self, *_args) -> bool:
+        return not self.finish()
+
+    def finish(self) -> bool:
+        """True when the window may close."""
+        if self.dirty:
+            dialog = Gtk.MessageDialog(
+                transient_for=self.win, modal=True,
+                message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.NONE,
+                text=tr("cfg_discard_title"),
+            )
+            dialog.format_secondary_text(tr("cfg_discard_text"))
+            dialog.add_button(tr("cfg_back"), Gtk.ResponseType.CANCEL)
+            dialog.add_button(tr("cfg_discard"), Gtk.ResponseType.CLOSE)
+            keep = dialog.add_button(tr("cfg_save"), Gtk.ResponseType.OK)
+            keep.get_style_context().add_class("suggested-action")
+            response = dialog.run()
+            dialog.destroy()
+            if response == Gtk.ResponseType.CANCEL or response == Gtk.ResponseType.DELETE_EVENT:
+                return False
+            if response == Gtk.ResponseType.OK and not self.on_save():
+                return False
+        self.cleanup()
+        Gtk.main_quit()
+        return True
+
+    def cleanup(self) -> None:
+        if self.preview_dir is not None:
+            shutil.rmtree(self.preview_dir, ignore_errors=True)
+            self.preview_dir = None
+
+
+# ------------------------------------------------------------------ main ---
+
+def main(argv: list[str]) -> int:
+    if len(argv) > 1:
+        flag = argv[1].lower()
+        if flag in ("--print-template", "print-template"):
+            return print_template()
+        if flag in ("-h", "--help", "help"):
+            print(__doc__)
+            return 0
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    if not init_gtk():
+        return 1
+    apply_theme(CK.load_config()["general"].get("editor_theme", "auto"))
+    editor = Editor()
+    editor.build()
+    Gtk.main()
+    editor.cleanup()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

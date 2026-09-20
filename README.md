@@ -10,6 +10,10 @@ Linux, with a radial menu, a window toggle and a sound set of its own.
 * **Press twice quickly** → always open the menu.
 * **Press again while the menu is open** → close it.
 * Every state change has its own audio cue.
+* The menu is set up without a configuration file: pick the apps from a list,
+  in a window of its own or right inside the wheel.
+* Skins decide what the wheel looks like — three ship with it, more are a
+  small text file away.
 
 The menu is a fullscreen overlay: it dims the desktop and unrolls in a circle
 from the centre. Drive it with `1`–`9`, the arrow keys, the scroll wheel or the
@@ -42,13 +46,24 @@ actually needed. It will:
    `pulseaudio-utils`)
 2. Install `keyd` — from the package sources, otherwise built from source into
    `~/Downloads/keyd` with prefix `/usr/local`
-3. Install the launcher to `~/.local/bin`, the sounds to
-   `~/.local/share/copilot-key` and the config to
-   `~/.config/copilot-key/config.toml`
+3. Install the programs to `/usr/local/bin` and the sounds and skins to
+   `/usr/local/share/copilot-key`
 4. Copy `config/keyd-copilot.conf` to `/etc/keyd/copilot.conf` and restart `keyd`
 5. Register the Cinnamon shortcut `Ctrl+Alt+Shift+F12` → `copilot-key`
 
-To remove it: `./uninstall.sh`
+### One machine, several people
+
+The installation is shared, the menu is not. Every user gets their own
+`~/.config/copilot-key/config.toml` — created from the defaults the first
+time they press the key — and their own shortcut, registered by a login hook
+in `/etc/xdg/autostart`. Nobody has to run an installer twice, and nobody
+edits anybody else's menu.
+
+Prefer to keep it inside your own home? `./install.sh --user` puts everything
+under `~/.local` exactly as before.
+
+To remove it: `./uninstall.sh` (it clears both, and leaves other users'
+configurations alone).
 
 After pulling an update, simply run `./install.sh` again — your existing
 configuration is left untouched.
@@ -82,8 +97,49 @@ shows what it really emits (via `keyd monitor`, falling back to `evtest`, then
 
 ## Configuration
 
+The menu comes with an editor, so nothing has to be typed into a file:
+
+![Menu editor](docs/editor.png)
+
+Open it from the menu itself (the gear entry), from your start menu
+("Copilot key menu"), or from a terminal:
+
+```bash
+copilot-key configure
+```
+
+Entries are added, reordered and removed on the left. **Choose an app…**
+lists every application installed on the machine and fills in name,
+description, command and window in one go — that is the whole job for most
+entries. The wheel on the right shows what the menu will look like, and
+**Test the menu** opens the real one with the current state, saved or not.
+Everything under *Advanced* is optional.
+
+Under **Behaviour** sit the sounds, the volume, the double-press window, the
+menu heading, the menu style and whether the editor window follows your
+desktop's light or dark theme.
+
+### Or without leaving the wheel
+
+![Editing in the wheel](docs/edit-mode.png)
+
+The sparkle in the middle of the menu is a button. It reveals two small tools:
+the gear opens the editor window, the pencil turns the wheel itself into the
+editor.
+
+* **Drag** a button around the wheel to reorder it; the others move out of the
+  way while you do.
+* **Click** a button and a search bar slides in above the wheel. Type, pick an
+  application with `↑`/`↓` and `Enter`, and it lands on the button you clicked
+  — which glows until it has one.
+* **+** adds another button, **✕** on a button removes it.
+* `Esc` leaves the editor, `Esc` again closes the menu.
+
+There is no save button: every change is written the moment you make it.
+
+The editor writes the very same file you can also edit yourself:
 `~/.config/copilot-key/config.toml`. Changes take effect on the next key press;
-nothing needs restarting.
+nothing needs restarting. Saving keeps one backup as `config.toml.bak`.
 
 ```toml
 [general]
@@ -115,6 +171,7 @@ early on an unusual desktop.
 | `@claude-desktop` | looks for an installed Claude desktop app, falls back to `claude.ai` in the browser |
 | `@terminal <cmd>` | runs `<cmd>` in a new terminal window (the terminal stays open afterwards) |
 | `@browser <url>` | opens `<url>` in the default application |
+| `@configure` | opens the graphical menu editor |
 | `@edit-config` | opens this file in the default editor |
 
 Anything else is executed as an ordinary command line. `window_class` is a
@@ -174,6 +231,27 @@ them to anything you like regardless of locale.
 
 ---
 
+## Skins
+
+`menu_skin` in `[general]` picks the look of the wheel. Three ship with the
+project:
+
+| Skin | Look |
+|---|---|
+| `terracotta` | the built-in one: flat discs, warm accent |
+| `aurora` | modern multi-coloured 3D spheres with a highlight |
+| `mint` | rounded squares, soft gradient, Linux Mint green |
+
+A skin is one small TOML file — colours, a button shape, a shading style. The
+editor's **Skin** tab lists everything it finds, previews it live and opens
+your own skin folder (`~/.config/copilot-key/skins/`), where a copy shadows
+the one that ships with the project.
+
+Writing one takes a few lines and no code: **[docs/skins.md](docs/skins.md)**
+has the format, every key and the pitfalls.
+
+---
+
 ## Sounds
 
 Six cues from one sound family — soft glass bells on a pentatonic scale over D,
@@ -229,15 +307,22 @@ overlay simply covers the screen opaquely.
 ```
 bin/copilot-key          launcher: toggle logic, menu, cue playback
 bin/copilot-sound        cue playback (paplay / pw-play / ffplay / mpv / aplay)
+bin/copilot-config       graphical editor for the menu, with app search
+skins/                   the three shipped skins
+docs/skins.md            how to write your own skin
 lib/i18n.sh              string catalogue for the shell scripts
-config/config.toml       configuration template (English)
-config/config.de.toml    configuration template (German)
+config/config.toml       configuration template (English, printed by the editor)
+config/config.de.toml    configuration template (German, printed by the editor)
 config/keyd-copilot.conf keyd rule for the Copilot chord
+config/copilot-key-config.desktop  start menu entry for the editor
+config/copilot-key-autostart.desktop  per-user setup at login
 sounds/                  six CC0 cues
 tools/generate_sounds.py sound generator
 detect-key.sh            shows what the key actually sends
 doctor.sh                checks installation, audio chain and shortcut
 docs/menu.png            screenshot of the radial menu
+docs/editor.png          screenshot of the editor
+docs/edit-mode.png       screenshot of the wheel in edit mode
 install.sh / uninstall.sh
 ```
 

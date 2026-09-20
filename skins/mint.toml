@@ -1,0 +1,15 @@
+# Mint - the buttons of a Linux Mint desktop: rounded squares, a soft
+# gradient, a solid border and the familiar green.
+
+name = "Mint"
+author = "copilot-key"
+style = "mint"
+shape = "rounded"
+
+[colors]
+backdrop = "#1B1B1B"
+button = "#3C3C3B"
+edge = "#FFFFFF26"
+accent = "#86BE43"
+text = "#F5F5F5"
+text_dim = "#B4B4B4"

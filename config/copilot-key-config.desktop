@@ -1,0 +1,19 @@
+[Desktop Entry]
+# Installed to ~/.local/share/applications by install.sh, which rewrites Exec
+# to the absolute path of the editor.
+Type=Application
+Version=1.0
+Name=Copilot key menu
+Name[de]=Copilot-Tasten-Menü
+GenericName=Menu of the Copilot key
+GenericName[de]=Menü der Copilot-Taste
+Comment=Choose what the Copilot key opens
+Comment[de]=Festlegen, was die Copilot-Taste öffnet
+Exec=copilot-config
+Icon=preferences-desktop-keyboard-shortcuts
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=copilot;key;menu;launcher;shortcut;
+Keywords[de]=copilot;taste;menü;starter;tastenkürzel;
+StartupNotify=true
+StartupWMClass=copilot-config
