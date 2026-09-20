@@ -1,0 +1,15 @@
+[Desktop Entry]
+# Installed to /etc/xdg/autostart by a system-wide install.sh, which rewrites
+# Exec to the absolute path. It runs once per login, registers the Copilot
+# shortcut for whoever logged in and exits - so every user of the machine gets
+# a working key and their own menu without another visit from an admin.
+Type=Application
+Version=1.0
+Name=Copilot key setup
+Name[de]=Copilot-Tasten-Einrichtung
+Comment=Registers the Copilot key shortcut for this user
+Comment[de]=Legt das Tastenkürzel der Copilot-Taste für diesen Nutzer an
+Exec=copilot-key ensure-shortcut
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

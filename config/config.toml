@@ -1,6 +1,8 @@
 # copilot-key - configuration
 # Copied to ~/.config/copilot-key/config.toml during installation.
 # Changes take effect on the next key press - nothing needs restarting.
+#
+# Everything in here can be clicked together instead:  copilot-key configure
 
 [general]
 # Sounds on or off.
@@ -28,18 +30,26 @@ close_on_focus_loss = true
 # Menu style: "radial" (overlay wheel) or "list" (plain vertical list).
 menu_style = "radial"
 
+# Skin of the wheel: a file name from skins/, without the .toml.
+# Shipped: terracotta, aurora, mint. Writing your own: docs/skins.md.
+menu_skin = "terracotta"
+
 # How far the desktop behind the menu is dimmed, 0.0 to 1.0.
 dim_opacity = 0.62
+
+# Theme of the editor window: "auto" follows the desktop, or "dark" / "light".
+editor_theme = "auto"
 
 
 # --- actions ----------------------------------------------------------------
 # Order = order in the menu = number keys 1-9.
 #
-# command understands four placeholders:
+# command understands five placeholders:
 #   @claude-desktop   looks for an installed Claude desktop app,
 #                     falls back to claude.ai in the browser
 #   @terminal <cmd>   runs <cmd> in a new terminal window
 #   @browser <url>    opens <url> in the default application
+#   @configure        opens the graphical menu editor
 #   @edit-config      opens this file in the default editor
 # Anything else runs as an ordinary command line.
 #
@@ -78,9 +88,9 @@ primary = false
 
 [[actions]]
 id = "settings"
-label = "Configuration"
-subtitle = "Open config.toml in the default editor"
-command = "@edit-config"
+label = "Set up the menu"
+subtitle = "Edit the entries and the behaviour in a window"
+command = "@configure"
 icon = "gear"
 window_class = ""
 primary = false

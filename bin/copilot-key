@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -39,11 +40,35 @@ def config_path() -> Path:
     return Path(base) / APP / "config.toml"
 
 
+def data_dirs() -> list[Path]:
+    """Every place the installed data - sounds, skins - can live.
+
+    A system-wide install puts it under /usr/local/share/copilot-key, a
+    per-user one under ~/.local/share/copilot-key, and a git checkout keeps it
+    next to the scripts. All three are searched, in that order of preference.
+    """
+    dirs: list[Path] = []
+    env = os.environ.get("COPILOT_KEY_DATA_DIR")
+    if env:
+        dirs.append(Path(env))
+    home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    dirs.append(Path(home) / APP)
+    raw = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    dirs += [Path(part) / APP for part in raw.split(":") if part]
+    # A login shell does not always carry /usr/local/share in XDG_DATA_DIRS.
+    dirs += [Path("/usr/local/share") / APP, Path("/usr/share") / APP]
+    # Next to the scripts: a git checkout, or any prefix install.sh was
+    # pointed at, where the data sits in <prefix>/share/copilot-key.
+    dirs += [PROJECT_DIR, PROJECT_DIR / "share" / APP]
+    return list(dict.fromkeys(dirs))
+
+
 def sound_dir() -> Path:
     env = os.environ.get("COPILOT_KEY_SOUND_DIR")
     if env:
         return Path(env)
-    for candidate in (Path.home() / ".local/share" / APP / "sounds", PROJECT_DIR / "sounds"):
+    for base in data_dirs():
+        candidate = base / "sounds"
         if candidate.is_dir():
             return candidate
     return PROJECT_DIR / "sounds"
@@ -59,14 +84,22 @@ STRINGS = {
         "menu_title_fallback": "Choose an action",
         "hint_radial": "1\u20139 select  \u00b7  \u2190/\u2192 rotate  \u00b7  Enter confirm  \u00b7  Esc close",
         "hint_list": "1\u20139 select  \u00b7  Enter confirm  \u00b7  Esc close",
+        "hint_edit": "Drag to reorder  \u00b7  click a button to fill it  \u00b7  "
+                     "+ adds one  \u00b7  Esc leaves the editor",
+        "hint_search": "Type to search  \u00b7  \u2191/\u2193 choose  \u00b7  "
+                       "Enter takes it  \u00b7  Esc cancels",
+        "tool_config": "Open the editor",
+        "tool_edit": "Edit the wheel right here",
+        "search_placeholder": "Which application?",
+        "slot_empty": "not set yet",
         "action_desktop_label": "Claude Desktop",
         "action_desktop_subtitle": "Bring the window to the front, or start it",
         "action_code_label": "Claude Code",
         "action_code_subtitle": "New terminal running a Claude Code session",
         "action_web_label": "claude.ai in the browser",
         "action_web_subtitle": "Open the web interface in the default application",
-        "action_settings_label": "Configuration",
-        "action_settings_subtitle": "Open config.toml in the default editor",
+        "action_settings_label": "Set up the menu",
+        "action_settings_subtitle": "Edit the entries and the behaviour in a window",
         "warn_no_cairo": "python3-gi-cairo is missing - falling back to the list menu "
                          "(sudo apt install python3-gi-cairo)",
         "warn_no_terminal": "no terminal emulator found",
@@ -76,21 +109,118 @@ STRINGS = {
         "warn_cue_failed": "cue {cue} failed: {error}",
         "warn_config_error": "config error in {path}: {error} - using built-in defaults",
         "warn_no_tomllib": "tomllib unavailable (needs Python 3.11+) - using built-in defaults",
-        "usage": "usage: copilot-key [auto|menu|toggle|test-sounds]",
+        "warn_skin_error": "skin {path} is broken: {error} - skipping it",
+        "warn_skin_missing": "no skin called {name} - using the built-in one",
+        "warn_no_gsettings": "gsettings is missing - please bind the shortcut yourself",
+        "warn_no_cinnamon": "no Cinnamon keybinding settings - bind {binding} to "
+                            "copilot-key in your desktop settings",
+        "warn_no_slot": "no free shortcut slot - please add the binding yourself",
+        # -- the graphical editor, bin/copilot-config ------------------------
+        "cfg_title": "Copilot key - set up the menu",
+        "cfg_tab_menu": "Menu entries",
+        "cfg_tab_behaviour": "Behaviour",
+        "cfg_tab_skin": "Skin",
+        "cfg_skin_hint": "How the wheel looks. Copy one of the files into your own "
+                         "skin folder to build on it - the menu picks it up on the "
+                         "next press.",
+        "cfg_skin_guide": "How to write a skin",
+        "cfg_skin_folder": "Open the skin folder",
+        "cfg_skin_by": "by {author}",
+        "cfg_gen_theme": "Window theme",
+        "cfg_theme_auto": "follow the desktop",
+        "cfg_theme_dark": "always dark",
+        "cfg_theme_light": "always light",
+        "cfg_entries": "Your entries",
+        "cfg_entries_hint": "This is the order of the menu: entry 1 to 9 answers "
+                            "the number key of the same name.",
+        "cfg_add": "Add",
+        "cfg_remove": "Remove",
+        "cfg_up": "Move up",
+        "cfg_down": "Move down",
+        "cfg_pick_app": "Choose an app\u2026",
+        "cfg_pick_app_hint": "Takes name, description, command and window from the "
+                             "applications you have installed.",
+        "cfg_field_name": "Name",
+        "cfg_field_desc": "Description",
+        "cfg_field_icon": "Symbol",
+        "cfg_primary": "A single key press opens this entry",
+        "cfg_primary_hint": "Exactly one entry can have this. A double press always "
+                            "opens the menu.",
+        "cfg_advanced": "Advanced",
+        "cfg_field_command": "Command",
+        "cfg_field_command_hint": "@claude-desktop, @terminal <command>, @browser <url>, "
+                                  "@configure, @edit-config \u2013 anything else is an "
+                                  "ordinary command line.",
+        "cfg_field_class": "Window",
+        "cfg_field_class_hint": "Part of the window's WM_CLASS. Without it the entry "
+                                "starts the program again instead of toggling it.",
+        "cfg_pick_window": "Pick an open window\u2026",
+        "cfg_test": "Test the menu",
+        "cfg_test_hint": "Opens the real menu with the current settings, saved or not.",
+        "cfg_close": "Close",
+        "cfg_save": "Save",
+        "cfg_cancel": "Cancel",
+        "cfg_use": "Use",
+        "cfg_back": "Back",
+        "cfg_discard": "Discard",
+        "cfg_discard_title": "Save the changes?",
+        "cfg_discard_text": "Until you save, the menu keeps the entries it has now.",
+        "cfg_new_entry": "New entry",
+        "cfg_preview_empty": "No entries yet \u2013 add one with the plus button.",
+        "cfg_too_many": "Only the first nine entries get a number key.",
+        "cfg_keep_one": "The menu needs at least one entry.",
+        "cfg_saved": "Saved: {path}",
+        "cfg_save_failed": "could not save: {error}",
+        "cfg_test_failed": "could not open the menu: {error}",
+        "cfg_apps_title": "Choose an application",
+        "cfg_apps_search": "Type to search\u2026",
+        "cfg_apps_none": "No application matches.",
+        "cfg_windows_title": "Pick a window",
+        "cfg_windows_hint": "The entry then toggles this window instead of starting "
+                            "the program a second time.",
+        "cfg_windows_none": "No window is open right now.",
+        "cfg_behaviour_hint": "How the key itself behaves. Everything here takes effect "
+                              "on the next press.",
+        "cfg_gen_sounds": "Play sounds",
+        "cfg_gen_volume": "Volume",
+        "cfg_gen_double": "Double press",
+        "cfg_gen_double_hint": "Two presses within this time count as a double press "
+                               "(milliseconds).",
+        "cfg_gen_single": "A single press",
+        "cfg_single_toggle_or_menu": "toggles the window, otherwise opens the menu",
+        "cfg_single_toggle": "always toggles the window",
+        "cfg_single_menu": "always opens the menu",
+        "cfg_gen_title": "Menu heading",
+        "cfg_gen_style": "Menu style",
+        "cfg_style_radial": "wheel (overlay)",
+        "cfg_style_list": "list",
+        "cfg_gen_dim": "Dim the desktop",
+        "cfg_gen_focus": "Close the menu when it loses focus",
+        "cfg_no_gtk": "the graphical editor needs python3-gi: {error}",
+        "cfg_no_editor": "graphical editor not found: {path}",
+        "usage": "usage: copilot-key [auto|menu|toggle|configure|test-sounds]",
     },
     "de": {
         "menu_title": "Was darf es sein?",
         "menu_title_fallback": "Aktion w\u00e4hlen",
         "hint_radial": "1\u20139 w\u00e4hlen  \u00b7  \u2190/\u2192 drehen  \u00b7  Enter best\u00e4tigen  \u00b7  Esc schlie\u00dfen",
         "hint_list": "1\u20139 w\u00e4hlen  \u00b7  Enter best\u00e4tigen  \u00b7  Esc schlie\u00dfen",
+        "hint_edit": "Ziehen sortiert  \u00b7  Klick belegt einen Button  \u00b7  "
+                     "+ legt einen an  \u00b7  Esc beendet",
+        "hint_search": "Tippen zum Suchen  \u00b7  \u2191/\u2193 w\u00e4hlen  \u00b7  "
+                       "Enter \u00fcbernimmt  \u00b7  Esc bricht ab",
+        "tool_config": "Editor \u00f6ffnen",
+        "tool_edit": "Rad direkt hier bearbeiten",
+        "search_placeholder": "Welche Anwendung?",
+        "slot_empty": "noch nicht belegt",
         "action_desktop_label": "Claude Desktop",
         "action_desktop_subtitle": "Fenster in den Vordergrund holen oder starten",
         "action_code_label": "Claude Code",
         "action_code_subtitle": "Neues Terminal mit laufender Claude-Code-Sitzung",
         "action_web_label": "claude.ai im Browser",
         "action_web_subtitle": "Weboberfl\u00e4che in der Standardanwendung \u00f6ffnen",
-        "action_settings_label": "Konfiguration",
-        "action_settings_subtitle": "config.toml im Standardeditor \u00f6ffnen",
+        "action_settings_label": "Men\u00fc einrichten",
+        "action_settings_subtitle": "Eintr\u00e4ge und Verhalten in einem Fenster bearbeiten",
         "warn_no_cairo": "python3-gi-cairo fehlt - verwende das Listenmen\u00fc "
                          "(sudo apt install python3-gi-cairo)",
         "warn_no_terminal": "kein Terminal-Emulator gefunden",
@@ -101,7 +231,97 @@ STRINGS = {
         "warn_config_error": "Fehler in {path}: {error} - verwende die eingebauten Vorgaben",
         "warn_no_tomllib": "tomllib nicht verf\u00fcgbar (braucht Python 3.11+) - "
                            "verwende die eingebauten Vorgaben",
-        "usage": "Aufruf: copilot-key [auto|menu|toggle|test-sounds]",
+        "warn_skin_error": "Skin {path} ist defekt: {error} - wird \u00fcbersprungen",
+        "warn_skin_missing": "kein Skin namens {name} - verwende den eingebauten",
+        "warn_no_gsettings": "gsettings fehlt - bitte das K\u00fcrzel selbst anlegen",
+        "warn_no_cinnamon": "keine Cinnamon-Tastenk\u00fcrzel gefunden - bitte {binding} "
+                            "in den Desktop-Einstellungen auf copilot-key legen",
+        "warn_no_slot": "kein freier K\u00fcrzel-Slot - bitte selbst anlegen",
+        # -- the graphical editor, bin/copilot-config ------------------------
+        "cfg_title": "Copilot-Taste \u2013 Men\u00fc einrichten",
+        "cfg_tab_menu": "Men\u00fceintr\u00e4ge",
+        "cfg_tab_behaviour": "Verhalten",
+        "cfg_tab_skin": "Skin",
+        "cfg_skin_hint": "Wie das Rad aussieht. F\u00fcr einen eigenen Skin eine der "
+                         "Dateien in den eigenen Skin-Ordner kopieren - das Men\u00fc "
+                         "nimmt sie beim n\u00e4chsten Druck.",
+        "cfg_skin_guide": "Anleitung: eigene Skins",
+        "cfg_skin_folder": "Skin-Ordner \u00f6ffnen",
+        "cfg_skin_by": "von {author}",
+        "cfg_gen_theme": "Fenster-Design",
+        "cfg_theme_auto": "wie der Desktop",
+        "cfg_theme_dark": "immer dunkel",
+        "cfg_theme_light": "immer hell",
+        "cfg_entries": "Deine Eintr\u00e4ge",
+        "cfg_entries_hint": "Das ist die Reihenfolge im Men\u00fc: Eintrag 1 bis 9 h\u00f6rt auf "
+                            "die gleichnamige Zifferntaste.",
+        "cfg_add": "Hinzuf\u00fcgen",
+        "cfg_remove": "Entfernen",
+        "cfg_up": "Nach oben",
+        "cfg_down": "Nach unten",
+        "cfg_pick_app": "App ausw\u00e4hlen\u2026",
+        "cfg_pick_app_hint": "Holt Name, Beschreibung, Befehl und Fenster aus den "
+                             "installierten Anwendungen.",
+        "cfg_field_name": "Name",
+        "cfg_field_desc": "Beschreibung",
+        "cfg_field_icon": "Symbol",
+        "cfg_primary": "Ein einzelner Tastendruck \u00f6ffnet diesen Eintrag",
+        "cfg_primary_hint": "Das kann genau ein Eintrag. Ein Doppeldruck \u00f6ffnet immer "
+                            "das Men\u00fc.",
+        "cfg_advanced": "Erweitert",
+        "cfg_field_command": "Befehl",
+        "cfg_field_command_hint": "@claude-desktop, @terminal <Befehl>, @browser <URL>, "
+                                  "@configure, @edit-config \u2013 alles andere ist eine "
+                                  "gew\u00f6hnliche Kommandozeile.",
+        "cfg_field_class": "Fenster",
+        "cfg_field_class_hint": "Teil der WM_CLASS des Fensters. Ohne sie startet der "
+                                "Eintrag das Programm neu, statt umzuschalten.",
+        "cfg_pick_window": "Offenes Fenster w\u00e4hlen\u2026",
+        "cfg_test": "Men\u00fc testen",
+        "cfg_test_hint": "\u00d6ffnet das echte Men\u00fc mit den aktuellen Einstellungen \u2013 "
+                         "gespeichert oder nicht.",
+        "cfg_close": "Schlie\u00dfen",
+        "cfg_save": "Speichern",
+        "cfg_cancel": "Abbrechen",
+        "cfg_use": "\u00dcbernehmen",
+        "cfg_back": "Zur\u00fcck",
+        "cfg_discard": "Verwerfen",
+        "cfg_discard_title": "\u00c4nderungen speichern?",
+        "cfg_discard_text": "Bis zum Speichern beh\u00e4lt das Men\u00fc seine bisherigen Eintr\u00e4ge.",
+        "cfg_new_entry": "Neuer Eintrag",
+        "cfg_preview_empty": "Noch keine Eintr\u00e4ge \u2013 lege einen mit dem Plus an.",
+        "cfg_too_many": "Nur die ersten neun Eintr\u00e4ge bekommen eine Zifferntaste.",
+        "cfg_keep_one": "Das Men\u00fc braucht mindestens einen Eintrag.",
+        "cfg_saved": "Gespeichert: {path}",
+        "cfg_save_failed": "Speichern fehlgeschlagen: {error}",
+        "cfg_test_failed": "Men\u00fc lie\u00df sich nicht \u00f6ffnen: {error}",
+        "cfg_apps_title": "Anwendung ausw\u00e4hlen",
+        "cfg_apps_search": "Tippen zum Suchen\u2026",
+        "cfg_apps_none": "Keine Anwendung passt dazu.",
+        "cfg_windows_title": "Fenster w\u00e4hlen",
+        "cfg_windows_hint": "Der Eintrag schaltet danach dieses Fenster um, statt das "
+                            "Programm ein zweites Mal zu starten.",
+        "cfg_windows_none": "Gerade ist kein Fenster offen.",
+        "cfg_behaviour_hint": "Wie sich die Taste selbst verh\u00e4lt. Alles hier greift beim "
+                              "n\u00e4chsten Druck.",
+        "cfg_gen_sounds": "Sounds abspielen",
+        "cfg_gen_volume": "Lautst\u00e4rke",
+        "cfg_gen_double": "Doppeldruck",
+        "cfg_gen_double_hint": "Zwei Dr\u00fccke innerhalb dieser Zeit gelten als Doppeldruck "
+                               "(Millisekunden).",
+        "cfg_gen_single": "Ein einzelner Druck",
+        "cfg_single_toggle_or_menu": "schaltet das Fenster um, sonst Men\u00fc",
+        "cfg_single_toggle": "schaltet immer das Fenster um",
+        "cfg_single_menu": "\u00f6ffnet immer das Men\u00fc",
+        "cfg_gen_title": "Men\u00fc-\u00dcberschrift",
+        "cfg_gen_style": "Men\u00fc-Stil",
+        "cfg_style_radial": "Rad (Overlay)",
+        "cfg_style_list": "Liste",
+        "cfg_gen_dim": "Hintergrund abdunkeln",
+        "cfg_gen_focus": "Men\u00fc schlie\u00dfen, wenn es den Fokus verliert",
+        "cfg_no_gtk": "der grafische Editor braucht python3-gi: {error}",
+        "cfg_no_editor": "grafischer Editor nicht gefunden: {path}",
+        "usage": "Aufruf: copilot-key [auto|menu|toggle|configure|test-sounds]",
     },
 }
 
@@ -139,7 +359,9 @@ DEFAULT_CONFIG = {
         "menu_title": tr("menu_title"),
         "close_on_focus_loss": True,
         "menu_style": "radial",       # radial | list
+        "menu_skin": "terracotta",    # a file name from skins/, without .toml
         "dim_opacity": 0.62,          # how far the desktop behind is dimmed
+        "editor_theme": "auto",       # auto | dark | light
     },
     "actions": [
         {
@@ -173,7 +395,7 @@ DEFAULT_CONFIG = {
             "id": "settings",
             "label": tr("action_settings_label"),
             "subtitle": tr("action_settings_subtitle"),
-            "command": "@edit-config",
+            "command": "@configure",
             "icon": "gear",
             "window_class": "",
             "primary": False,
@@ -206,6 +428,372 @@ def load_config() -> dict:
 
 def warn(msg: str) -> None:
     print(f"{APP}: {msg}", file=sys.stderr)
+
+
+# ------------------------------------------------------------ toml output --
+# Both the editor and the menu's own edit mode write the configuration,
+# so the comments live here - and the shipped templates in config/ are
+# printed from the very same code (copilot-config --print-template),
+# which keeps the two from drifting apart.
+
+GENERAL_COMMENTS = [
+    ("sounds", "Sounds on or off."),
+    ("volume", "Cue volume, 0.0 to 1.0."),
+    ("double_press_ms", "Time window for the double press, in milliseconds."),
+    ("single_press",
+     "What a single press does:\n"
+     "  toggle_or_menu : toggle the primary action's window, open the menu if there is none\n"
+     "  toggle         : always toggle (starts the app when no window exists)\n"
+     "  menu           : always open the menu"),
+    ("menu_title", "Heading of the menu."),
+    ("close_on_focus_loss",
+     "Close the menu as soon as it loses focus (e.g. a click next to it).\n"
+     "Set to false if the menu disappears too early on your desktop."),
+    ("menu_style", 'Menu style: "radial" (overlay wheel) or "list" (plain vertical list).'),
+    ("menu_skin",
+     "Skin of the wheel: a file name from skins/, without the .toml.\n"
+     "Shipped: terracotta, aurora, mint. Writing your own: docs/skins.md."),
+    ("dim_opacity", "How far the desktop behind the menu is dimmed, 0.0 to 1.0."),
+    ("editor_theme",
+     'Theme of the editor window: "auto" follows the desktop, or "dark" / "light".'),
+]
+
+ACTION_KEYS = ["id", "label", "subtitle", "command", "icon", "window_class", "primary"]
+
+ACTIONS_COMMENT = """--- actions ----------------------------------------------------------------
+Order = order in the menu = number keys 1-9.
+
+command understands five placeholders:
+  @claude-desktop   looks for an installed Claude desktop app,
+                    falls back to claude.ai in the browser
+  @terminal <cmd>   runs <cmd> in a new terminal window
+  @browser <url>    opens <url> in the default application
+  @configure        opens the graphical menu editor
+  @edit-config      opens this file in the default editor
+Anything else runs as an ordinary command line.
+
+icon         : window, terminal, globe, gear, chat, folder, power, sparkle
+window_class : substring of the window's WM_CLASS (used for toggling).
+               Find yours with:  wmctrl -lx
+primary      : exactly one action should be primary = true - that is the one
+               a single key press toggles."""
+
+TEMPLATE_HEADER = """copilot-key - configuration{variant}
+Copied to ~/.config/copilot-key/config.toml during installation.
+Changes take effect on the next key press - nothing needs restarting.
+
+Everything in here can be clicked together instead:  copilot-key configure"""
+
+FIRST_RUN_HEADER = """copilot-key - configuration
+Created from the defaults the first time the key was used.
+Edit it here, or click it together:  copilot-key configure
+Changes take effect on the next key press - nothing needs restarting."""
+
+USER_HEADER = """copilot-key - configuration
+Written by the graphical editor (copilot-key configure).
+Editing it by hand stays perfectly fine; the editor rewrites the comments.
+Changes take effect on the next key press - nothing needs restarting."""
+
+LANGUAGE_NAMES = {"de": "German"}
+
+
+def toml_string(value: str) -> str:
+    out = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    out = out.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    return f'"{out}"'
+
+
+def toml_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        # Always keep a decimal point: 1.0 must not turn into a TOML integer.
+        text = f"{value:.4f}".rstrip("0")
+        return text + "0" if text.endswith(".") else text
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    return toml_string(value)
+
+
+def comment_block(text: str) -> str:
+    return "".join(f"# {line}\n" if line else "#\n" for line in text.split("\n"))
+
+
+def dump_config(cfg: dict, header: str) -> str:
+    """Render a complete, commented config.toml."""
+    known = [key for key, _comment in GENERAL_COMMENTS]
+    general = cfg.get("general", {})
+
+    out = [comment_block(header), "\n[general]\n"]
+    first = True
+    for key, comment in GENERAL_COMMENTS:
+        if key not in general:
+            continue
+        if not first:
+            out.append("\n")
+        first = False
+        out.append(comment_block(comment))
+        out.append(f"{key} = {toml_value(general[key])}\n")
+    # Whatever a newer version - or the user - added on top.
+    for key, value in general.items():
+        if key not in known:
+            out.append(f"\n{key} = {toml_value(value)}\n")
+
+    out.append("\n\n")
+    out.append(comment_block(ACTIONS_COMMENT))
+    for action in cfg.get("actions", []):
+        out.append("\n[[actions]]\n")
+        for key in ACTION_KEYS:
+            if key in action:
+                out.append(f"{key} = {toml_value(action[key])}\n")
+        for key, value in action.items():
+            if key not in ACTION_KEYS:
+                out.append(f"{key} = {toml_value(value)}\n")
+    return "".join(out)
+
+
+def normalise_config(general: dict, actions: list) -> dict:
+    """Fill the gaps an edited configuration may have left.
+
+    Ids are made unique and exactly one action stays primary, so a single key
+    press always has an answer - whoever did the editing.
+    """
+    result = []
+    used: set[str] = set()
+    for index, action in enumerate(actions):
+        item = dict(action)
+        item["label"] = str(item.get("label") or tr("cfg_new_entry"))
+        base = slugify(str(item.get("id") or item["label"])) or f"action-{index + 1}"
+        ident, suffix = base, 2
+        while ident in used:
+            ident = f"{base}-{suffix}"
+            suffix += 1
+        used.add(ident)
+        item["id"] = ident
+        item["subtitle"] = str(item.get("subtitle", ""))
+        item["command"] = str(item.get("command", ""))
+        item["icon"] = str(item.get("icon") or icon_for(item))
+        item["window_class"] = str(item.get("window_class", ""))
+        item["primary"] = bool(item.get("primary"))
+        result.append(item)
+
+    primaries = [item for item in result if item["primary"]]
+    for item in primaries[1:]:
+        item["primary"] = False
+    if result and not primaries:
+        result[0]["primary"] = True
+    return {"general": dict(general), "actions": result}
+
+
+def save_config(cfg: dict) -> Path:
+    """Write the configuration atomically, keeping one backup."""
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        try:
+            shutil.copy2(path, path.with_suffix(".toml.bak"))
+        except OSError:
+            pass
+    tmp = path.with_name(path.name + ".new")
+    tmp.write_text(dump_config(cfg, USER_HEADER), encoding="utf-8")
+    os.replace(tmp, path)   # the key must never read a half-written file
+    return path
+
+
+def slugify(text: str) -> str:
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", text)
+    plain = "".join(ch for ch in plain if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")[:40]
+
+
+# ------------------------------------------------------- desktop entries ---
+# Reading the installed applications straight from the XDG desktop files is
+# what turns "type a command line" into "pick your app from a list".
+
+FIELD_CODES = re.compile(r"(?<!%)%[fFuUdDnNickvm]")
+
+CATEGORY_ICONS = [
+    ("TerminalEmulator", "terminal"),
+    ("WebBrowser", "globe"),
+    ("FileManager", "folder"),
+    ("InstantMessaging", "chat"),
+    ("Chat", "chat"),
+    ("Email", "chat"),
+    ("Settings", "gear"),
+    ("Development", "terminal"),
+    ("Network", "globe"),
+]
+
+
+class App:
+    """One installed application, reduced to what an action needs."""
+
+    __slots__ = ("name", "comment", "command", "window_class", "icon_name",
+                 "icon", "terminal", "haystack")
+
+    def __init__(self, name, comment, command, window_class, icon_name, icon, terminal):
+        self.name = name
+        self.comment = comment
+        self.command = command
+        self.window_class = window_class
+        self.icon_name = icon_name
+        self.icon = icon
+        self.terminal = terminal
+        self.haystack = f"{name} {comment} {command}".lower()
+
+
+def desktop_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    raw = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    candidates = [Path(home)]
+    candidates += [Path(part) for part in raw.split(":") if part]
+    # Flatpak exports are missing from XDG_DATA_DIRS in some sessions.
+    candidates += [Path.home() / ".local/share/flatpak/exports/share",
+                   Path("/var/lib/flatpak/exports/share")]
+    for base in candidates:
+        path = base / "applications"
+        if path.is_dir() and path not in dirs:
+            dirs.append(path)
+    return dirs
+
+
+def parse_desktop(path: Path) -> dict:
+    """Read the [Desktop Entry] group of a .desktop file."""
+    data: dict[str, str] = {}
+    inside = False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return data
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            inside = line == "[Desktop Entry]"
+            continue
+        if not inside or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        data[key.strip()] = value.strip()
+    return data
+
+
+def localized(data: dict, key: str) -> str:
+    """The translation for the current language, else the base value."""
+    return data.get(f"{key}[{LANG}]") or data.get(key, "")
+
+
+def strip_field_codes(exec_line: str) -> str:
+    cleaned = FIELD_CODES.sub("", exec_line).replace("%%", "%")
+    return " ".join(cleaned.split())
+
+
+def guess_icon(data: dict, name: str, command: str, terminal: bool) -> str:
+    if terminal:
+        return "terminal"
+    categories = data.get("Categories", "")
+    for needle, icon in CATEGORY_ICONS:
+        if needle in categories:
+            return icon
+    guessed = icon_for({"id": command, "label": name})
+    # A plain application opens a window - a better default than "sparkle".
+    return "window" if guessed == "sparkle" else guessed
+
+
+def read_apps() -> list[App]:
+    """Every visible, runnable application, deduplicated by desktop id."""
+    apps: list[App] = []
+    seen: set[str] = set()
+    for directory in desktop_dirs():
+        try:
+            files = sorted(directory.glob("*.desktop"))
+        except OSError:
+            continue
+        for path in files:
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            data = parse_desktop(path)
+            if data.get("Type", "Application") != "Application":
+                continue
+            if data.get("NoDisplay", "").lower() == "true":
+                continue
+            if data.get("Hidden", "").lower() == "true":
+                continue
+            exec_line = data.get("Exec", "")
+            if not exec_line:
+                continue
+            try_exec = data.get("TryExec", "")
+            if try_exec and not shutil.which(try_exec) and not Path(try_exec).is_file():
+                continue
+            command = strip_field_codes(exec_line)
+            if not command:
+                continue
+            name = localized(data, "Name") or path.stem
+            comment = localized(data, "Comment") or localized(data, "GenericName")
+            if comment.strip().lower() == name.strip().lower():
+                comment = ""
+            terminal = data.get("Terminal", "").lower() == "true"
+            window_class = data.get("StartupWMClass", "")
+            if not window_class:
+                try:
+                    window_class = Path(shlex.split(command)[0]).name
+                except (ValueError, IndexError):
+                    window_class = ""
+            apps.append(App(
+                name=name,
+                comment=comment,
+                command=command,
+                window_class=window_class,
+                icon_name=data.get("Icon", ""),
+                icon=guess_icon(data, name, command, terminal),
+                terminal=terminal,
+            ))
+    apps.sort(key=lambda app: app.name.lower())
+    return apps
+
+
+def match_score(app: App, query: str) -> int:
+    """Lower is better; -1 means "does not match at all"."""
+    if not query:
+        return 5
+    name = app.name.lower()
+    words = query.split()
+    if not all(word in app.haystack for word in words):
+        return -1
+    if name.startswith(query):
+        return 0
+    if any(part.startswith(query) for part in name.split()):
+        return 1
+    if query in name:
+        return 2
+    return 3
+
+
+def open_windows() -> list[tuple[str, str]]:
+    """(window class, title) of everything currently on screen."""
+    if not have("wmctrl"):
+        return []
+    found: list[tuple[str, str]] = []
+    for line in run_out(["wmctrl", "-lx"]).splitlines():
+        parts = line.split(None, 4)
+        if len(parts) < 4:
+            continue
+        wm_class = parts[2]
+        title = parts[4] if len(parts) > 4 else ""
+        # wmctrl prints "instance.Class"; the class half is the useful one.
+        short = wm_class.split(".")[-1] or wm_class
+        if short.lower() in ("copilot-key", "copilot-config"):
+            continue
+        if (short, title) not in found:
+            found.append((short, title))
+    return found
 
 
 # ---------------------------------------------------------------- sound ----
@@ -330,6 +918,15 @@ def resolve(command: str) -> list[str] | None:
             return ["xdg-open", "https://claude.ai"]
         return None
 
+    if command == "@configure":
+        editor = SELF_DIR / "copilot-config"
+        if editor.is_file():
+            # Started through the interpreter: the file stays runnable even
+            # when a copy lost its executable bit.
+            return [sys.executable, str(editor)]
+        warn(tr("cfg_no_editor", path=editor))
+        return None
+
     if command == "@edit-config":
         path = config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -343,12 +940,25 @@ def resolve(command: str) -> list[str] | None:
 
 
 def write_default_config(path: Path) -> None:
-    template = PROJECT_DIR / "config" / "config.toml"
+    """The shipped defaults, in the language of whoever is logged in."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if template.is_file():
-        path.write_text(template.read_text())
-    else:
-        path.write_text("# see project README\n")
+    path.write_text(dump_config(DEFAULT_CONFIG, FIRST_RUN_HEADER), encoding="utf-8")
+
+
+def ensure_user_config() -> Path:
+    """Give every user their own copy of the defaults, once.
+
+    One installation serves the whole machine, but the menu belongs to the
+    person using it - so the first press writes the defaults into their own
+    ~/.config and everything they change after that stays theirs.
+    """
+    path = config_path()
+    if not path.is_file():
+        try:
+            write_default_config(path)
+        except OSError as exc:
+            warn(tr("warn_config_error", path=path, error=exc))
+    return path
 
 
 def launch_resolved(action: dict, sound: Sound) -> None:
@@ -391,6 +1001,73 @@ def activate_or_launch(action: dict, sound: Sound) -> None:
     else:
         sound.play("toggle-show")
         activate(wins[0])
+
+
+# ------------------------------------------------------- per-user setup ----
+# A system-wide installation is shared by the whole machine, but the shortcut
+# lives in each user's own settings. `copilot-key ensure-shortcut` registers
+# it, and the autostart entry runs that once per login - so a second user gets
+# a working key without anybody touching the system again.
+
+SHORTCUT_NAME = "Copilot key"
+SHORTCUT_BINDING = "<Control><Alt><Shift>F12"
+CINNAMON_SCHEMA = "org.cinnamon.desktop.keybindings"
+CINNAMON_PATH = "/org/cinnamon/desktop/keybindings/custom-keybindings"
+
+
+def gsettings_set(schema: str, key: str, value: str) -> bool:
+    try:
+        return subprocess.run(["gsettings", "set", schema, key, value],
+                              capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def gsettings_get(schema: str, key: str) -> str:
+    return run_out(["gsettings", "get", schema, key]).strip()
+
+
+def slot_schema(slot: str) -> str:
+    return f"{CINNAMON_SCHEMA}.custom-keybinding:{CINNAMON_PATH}/{slot}/"
+
+
+def ensure_shortcut(command: str = "") -> bool:
+    """Bind the Copilot chord to the launcher for the user running this."""
+    if not have("gsettings"):
+        warn(tr("warn_no_gsettings"))
+        return False
+    if CINNAMON_SCHEMA not in run_out(["gsettings", "list-schemas"]).split():
+        warn(tr("warn_no_cinnamon", binding=SHORTCUT_BINDING))
+        return False
+
+    command = command or str(shutil.which(APP) or SELF_DIR / APP)
+    raw = gsettings_get(CINNAMON_SCHEMA, "custom-list")
+    taken = re.findall(r"'([^']+)'", raw)
+
+    slot = ""
+    for index in range(20):                      # reuse our own entry
+        candidate = f"custom{index}"
+        if gsettings_get(slot_schema(candidate), "name").strip("'\"") == SHORTCUT_NAME:
+            slot = candidate
+            break
+    if not slot:
+        for index in range(20):                  # otherwise the first free one
+            if f"custom{index}" not in taken:
+                slot = f"custom{index}"
+                break
+    if not slot:
+        warn(tr("warn_no_slot"))
+        return False
+
+    schema = slot_schema(slot)
+    gsettings_set(schema, "name", SHORTCUT_NAME)
+    gsettings_set(schema, "command", command)
+    gsettings_set(schema, "binding", f"['{SHORTCUT_BINDING}']")
+    if slot not in taken:
+        taken.append(slot)
+        gsettings_set(CINNAMON_SCHEMA, "custom-list",
+                      "[" + ", ".join(f"'{entry}'" for entry in taken) + "]")
+    return True
 
 
 # ------------------------------------------------------------ press state --
@@ -522,6 +1199,45 @@ def draw_icon(cr, name: str, size: float, rgba) -> None:
         cr.line_to(0, -s * 0.02)
         cr.stroke()
 
+    elif name == "pencil":
+        cr.save()
+        cr.rotate(-math.pi / 4)
+        body, length = s * 0.26, s * 0.74
+        cr.rectangle(-body / 2, -length / 2, body, length * 0.72)
+        cr.stroke()
+        cr.move_to(-body / 2, length * 0.22)
+        cr.line_to(0, length / 2 + s * 0.04)
+        cr.line_to(body / 2, length * 0.22)
+        cr.close_path()
+        cr.fill()
+        cr.restore()
+
+    elif name == "plus":
+        arm = s * 0.32
+        cr.move_to(-arm, 0)
+        cr.line_to(arm, 0)
+        cr.stroke()
+        cr.move_to(0, -arm)
+        cr.line_to(0, arm)
+        cr.stroke()
+
+    elif name == "cross":
+        arm = s * 0.28
+        cr.move_to(-arm, -arm)
+        cr.line_to(arm, arm)
+        cr.stroke()
+        cr.move_to(arm, -arm)
+        cr.line_to(-arm, arm)
+        cr.stroke()
+
+    elif name == "search":
+        cr.new_path()
+        cr.arc(-s * 0.07, -s * 0.07, s * 0.27, 0, 2 * math.pi)
+        cr.stroke()
+        cr.move_to(s * 0.13, s * 0.13)
+        cr.line_to(s * 0.38, s * 0.38)
+        cr.stroke()
+
     else:  # "sparkle" and anything unknown
         for scale, rot in ((1.0, 0.0), (0.45, math.pi / 4)):
             cr.save()
@@ -535,6 +1251,11 @@ def draw_icon(cr, name: str, size: float, rgba) -> None:
             cr.close_path()
             cr.fill()
             cr.restore()
+
+
+# Every icon draw_icon() knows, in the order the editor offers them.
+ICON_NAMES = ("window", "terminal", "globe", "gear", "chat",
+              "folder", "power", "pencil", "sparkle")
 
 
 ICON_GUESS = (
@@ -559,11 +1280,250 @@ def icon_for(action: dict) -> str:
     return "sparkle"
 
 
-# ------------------------------------------------------------------ menu ---
+# ----------------------------------------------------------------- skins ---
+# A skin is a small TOML file: a handful of colours, a button shape and a
+# paint style. Everything the overlay draws asks the skin for its colours, so
+# a skin changes the whole look without a line of code. Partial skins are fine
+# - every key a file omits falls back to the built-in one, exactly like the
+# string catalogue. The format is documented in docs/skins.md.
 
-ACCENT = (0.851, 0.467, 0.341)      # warm terracotta
+ACCENT = (0.851, 0.467, 0.341)      # warm terracotta - the built-in accent
 TEXT_BRIGHT = (0.949, 0.937, 0.922)
 TEXT_DIM = (0.640, 0.612, 0.584)
+
+BUILTIN_SKIN = {
+    "name": "Terracotta",
+    "author": "copilot-key",
+    "style": "flat",        # flat | glass | mint
+    "shape": "circle",      # circle | rounded
+    "colors": {
+        "backdrop": "#0B0A09",      # the dimmed desktop behind the wheel
+        "button": "#1C1A18",        # an unselected button
+        "edge": "#FFFFFF1F",        # its outline (alpha is part of the value)
+        "accent": "#D97757",        # selection, badges, the centre
+        "text": "#F2EFEB",
+        "text_dim": "#A39C94",
+    },
+    "palette": [],          # one colour per button, cycled; empty = all alike
+}
+
+
+def parse_color(value, fallback=(1.0, 1.0, 1.0, 1.0)):
+    """`#RGB`, `#RRGGBB` or `#RRGGBBAA` as an rgba tuple of floats."""
+    text = str(value).strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) == 6:
+        text += "ff"
+    if len(text) != 8:
+        return fallback
+    try:
+        return tuple(int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4, 6))
+    except ValueError:
+        return fallback
+
+
+def shade(rgba, factor: float):
+    """Darken (factor < 1) or lighten (factor > 1) without touching alpha."""
+    return tuple(min(1.0, rgba[i] * factor) for i in range(3)) + (rgba[3],)
+
+
+def lighten(rgba, amount: float):
+    """Blend towards white; keeps the alpha."""
+    return tuple(rgba[i] + (1.0 - rgba[i]) * amount for i in range(3)) + (rgba[3],)
+
+
+class Skin:
+    """The look of the overlay, read from one TOML file."""
+
+    def __init__(self, data: dict, skin_id: str = "terracotta") -> None:
+        merged = json.loads(json.dumps(BUILTIN_SKIN))
+        for key, value in data.items():
+            if key == "colors" and isinstance(value, dict):
+                merged["colors"].update(value)
+            else:
+                merged[key] = value
+        colors = merged["colors"]
+        self.id = skin_id
+        self.name = str(merged.get("name", skin_id))
+        self.author = str(merged.get("author", ""))
+        self.style = str(merged.get("style", "flat")).lower()
+        self.shape = str(merged.get("shape", "circle")).lower()
+        self.backdrop = parse_color(colors.get("backdrop"))
+        self.button = parse_color(colors.get("button"))
+        self.edge = parse_color(colors.get("edge"))
+        self.accent = parse_color(colors.get("accent"))
+        self.text = parse_color(colors.get("text"))
+        self.text_dim = parse_color(colors.get("text_dim"))
+        # A palette written below [colors] lands inside that table - a TOML
+        # rule everybody trips over once, so both spellings are accepted.
+        palette = merged.get("palette") or colors.pop("palette", None) or []
+        self.palette = [parse_color(entry) for entry in palette] if isinstance(palette, list) else []
+
+    def item_base(self, index: int):
+        """The base colour of button `index` - the palette makes it colourful."""
+        if self.palette:
+            return self.palette[index % len(self.palette)]
+        return self.button
+
+
+def skin_dirs() -> list[Path]:
+    """User skins first, so a copy shadows the one that ships with the app."""
+    dirs = [config_path().parent / "skins"]
+    dirs += [base / "skins" for base in data_dirs()]
+    return [d for d in dict.fromkeys(dirs) if d.is_dir()]
+
+
+def read_skin_file(path: Path) -> "Skin | None":
+    try:
+        import tomllib
+    except ModuleNotFoundError:   # Python < 3.11
+        return None
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except Exception as exc:      # a broken skin must never break the menu
+        warn(tr("warn_skin_error", path=path, error=exc))
+        return None
+    return Skin(data, path.stem)
+
+
+def available_skins() -> "dict[str, Skin]":
+    """Every readable skin, keyed by file name, sorted by display name."""
+    found: dict[str, Skin] = {"terracotta": Skin(BUILTIN_SKIN, "terracotta")}
+    for directory in reversed(skin_dirs()):
+        for path in sorted(directory.glob("*.toml")):
+            skin = read_skin_file(path)
+            if skin is not None:
+                found[path.stem] = skin
+    return dict(sorted(found.items(), key=lambda item: item[1].name.lower()))
+
+
+def load_skin(name: str) -> Skin:
+    name = str(name or "").strip()
+    if not name or name == "terracotta":
+        return Skin(BUILTIN_SKIN, "terracotta")
+    skins = available_skins()
+    if name in skins:
+        return skins[name]
+    warn(tr("warn_skin_missing", name=name))
+    return Skin(BUILTIN_SKIN, "terracotta")
+
+
+# ------------------------------------------------------------ skin paint ---
+
+def rounded_rect_path(cr, x, y, width, height, radius) -> None:
+    import math
+
+    cr.new_path()
+    cr.arc(x + width - radius, y + radius, radius, -math.pi / 2, 0)
+    cr.arc(x + width - radius, y + height - radius, radius, 0, math.pi / 2)
+    cr.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
+    cr.arc(x + radius, y + radius, radius, math.pi, 1.5 * math.pi)
+    cr.close_path()
+
+
+def button_path(cr, skin: Skin, x: float, y: float, radius: float) -> None:
+    """The outline of one button - a disc, or a rounded square."""
+    import math
+
+    cr.new_path()
+    if skin.shape == "rounded":
+        size = radius * 1.76
+        rounded_rect_path(cr, x - size / 2, y - size / 2, size, size, size * 0.26)
+    else:
+        cr.arc(x, y, radius, 0, 2 * math.pi)
+
+
+def paint_button(cr, skin: Skin, x: float, y: float, radius: float,
+                 index: int = 0, selected: bool = False, alpha: float = 1.0,
+                 empty: bool = False) -> None:
+    """One wheel button, drawn the way the skin asks for."""
+    import cairo
+
+    base = skin.item_base(index)
+    if empty:
+        base = base[:3] + (base[3] * 0.30,)
+
+    if selected:
+        cr.set_source_rgba(*skin.accent[:3], 0.22 * alpha)
+        button_path(cr, skin, x, y, radius + 9)
+        cr.fill()
+
+    if skin.style == "glass":
+        # A lit sphere: shadow underneath, vertical body gradient, and a
+        # specular highlight clipped to the button itself.
+        cr.set_source_rgba(0, 0, 0, 0.32 * alpha)
+        button_path(cr, skin, x, y + radius * 0.12, radius)
+        cr.fill()
+
+        body = cairo.LinearGradient(x, y - radius, x, y + radius)
+        top, bottom = lighten(base, 0.34), shade(base, 0.52)
+        body.add_color_stop_rgba(0.0, *top[:3], top[3] * alpha)
+        body.add_color_stop_rgba(1.0, *bottom[:3], bottom[3] * alpha)
+        button_path(cr, skin, x, y, radius)
+        cr.set_source(body)
+        cr.fill_preserve()
+        rim = skin.accent if selected else lighten(base, 0.55)
+        cr.set_source_rgba(*rim[:3], (0.95 if selected else 0.45) * alpha)
+        cr.set_line_width(2.2 if selected else 1.2)
+        cr.stroke()
+
+        cr.save()
+        button_path(cr, skin, x, y, radius)
+        cr.clip()
+        gloss = cairo.RadialGradient(x - radius * 0.34, y - radius * 0.52, radius * 0.05,
+                                     x - radius * 0.34, y - radius * 0.52, radius * 1.15)
+        gloss.add_color_stop_rgba(0.0, 1, 1, 1, 0.42 * alpha)
+        gloss.add_color_stop_rgba(1.0, 1, 1, 1, 0.0)
+        cr.set_source(gloss)
+        cr.paint()
+        cr.restore()
+
+    elif skin.style == "mint":
+        # Flat with a whisper of a gradient and a solid border - the way the
+        # buttons of a Mint desktop are drawn.
+        body = cairo.LinearGradient(x, y - radius, x, y + radius)
+        top, bottom = lighten(base, 0.10), shade(base, 0.88)
+        body.add_color_stop_rgba(0.0, *top[:3], top[3] * alpha)
+        body.add_color_stop_rgba(1.0, *bottom[:3], bottom[3] * alpha)
+        button_path(cr, skin, x, y, radius)
+        cr.set_source(body)
+        cr.fill_preserve()
+        border = skin.accent if selected else shade(base, 0.62)
+        cr.set_source_rgba(*border[:3], (0.95 if selected else 0.9) * alpha)
+        cr.set_line_width(2.0 if selected else 1.4)
+        cr.stroke()
+
+    else:   # flat
+        cr.set_source_rgba(*base[:3], base[3] * 0.97 * alpha)
+        button_path(cr, skin, x, y, radius)
+        cr.fill_preserve()
+        if selected:
+            cr.set_source_rgba(*skin.accent[:3], 0.95 * alpha)
+            cr.set_line_width(2.0)
+        else:
+            cr.set_source_rgba(*skin.edge[:3], skin.edge[3] * alpha)
+            cr.set_line_width(1.0)
+        cr.stroke()
+
+
+def css_rgba(rgba, alpha=None) -> str:
+    """A skin colour as GTK CSS understands it."""
+    red, green, blue, own = rgba
+    return (f"rgba({int(red * 255)},{int(green * 255)},{int(blue * 255)},"
+            f"{own if alpha is None else alpha:.3f})")
+
+
+def button_icon_rgba(skin: Skin, selected: bool, alpha: float = 1.0):
+    """Icon colour on top of a button of this skin."""
+    if skin.style in ("glass", "mint"):
+        # The button carries the colour, so the icon stays plain.
+        return (*skin.text[:3], (1.0 if selected else 0.92) * alpha)
+    return (*skin.accent[:3], alpha) if selected else (*skin.text[:3], 0.88 * alpha)
+
+
+# ------------------------------------------------------------------ menu ---
 
 
 def cairo_available() -> bool:
@@ -585,7 +1545,7 @@ def cairo_available() -> bool:
 def show_menu(cfg: dict, sound: "Sound") -> None:
     """Radial overlay menu. Falls back to a plain list on request."""
     style = str(cfg["general"].get("menu_style", "radial")).lower()
-    if style != "list" and not cairo_available():
+    if style != "list" and (not load_gtk() or not cairo_available()):
         warn(tr("warn_no_cairo"))
         style = "list"
     if style == "list":
@@ -594,393 +1554,976 @@ def show_menu(cfg: dict, sound: "Sound") -> None:
         show_radial_menu(cfg, sound)
 
 
-def show_radial_menu(cfg: dict, sound: "Sound") -> None:
-    import math
+# The GTK bits load on demand: a press that only toggles a window never needs
+# them, and the list menu works without the cairo bridge.
+Gtk = Gdk = GLib = Pango = PangoCairo = cairo = None
 
-    import cairo
-    import gi
 
-    gi.require_version("Gtk", "3.0")
-    gi.require_version("Gdk", "3.0")
-    gi.require_version("PangoCairo", "1.0")
-    from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo
-
-    actions = cfg["actions"]
-    if not actions:
-        sound.play("error")
-        return
-
-    general = cfg["general"]
-    dim = float(general.get("dim_opacity", 0.62))
-    title_text = str(general.get("menu_title", tr("menu_title_fallback")))
-
-    pidfile = runtime_dir() / "menu.pid"
-    pidfile.write_text(f"{os.getpid()}\n")
-    chosen: dict = {}
-
-    # --- window: one borderless fullscreen surface on the pointer's monitor --
-    win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-    # A stable title helps window managers (and scripted tests) identify the
-    # overlay. set_wmclass() would too, but it is deprecated in GTK 3 and GTK
-    # derives WM_CLASS from the program name anyway.
-    win.set_title("copilot-key")
-    win.set_decorated(False)
-    win.set_keep_above(True)
-    win.set_skip_taskbar_hint(True)
-    win.set_skip_pager_hint(True)
-    win.set_type_hint(Gdk.WindowTypeHint.SPLASHSCREEN)
-    win.set_app_paintable(True)
-
-    screen = win.get_screen()
-    composited = bool(screen.is_composited())
-    visual = screen.get_rgba_visual()
-    if visual is not None and composited:
-        win.set_visual(visual)
-
-    display = Gdk.Display.get_default()
-    geo = None
+def load_gtk() -> bool:
+    global Gtk, Gdk, GLib, Pango, PangoCairo, cairo
+    if Gtk is not None:
+        return True
     try:
-        pointer = display.get_default_seat().get_pointer()
-        _s, px, py = pointer.get_position()
-        monitor = display.get_monitor_at_point(px, py)
-        geo = monitor.get_geometry()
-    except Exception:
-        monitor = display.get_primary_monitor() if hasattr(display, "get_primary_monitor") else None
-        if monitor is not None:
-            geo = monitor.get_geometry()
-    if geo is not None:
-        win.move(geo.x, geo.y)
-        win.set_default_size(geo.width, geo.height)
-        win.resize(geo.width, geo.height)
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Gdk", "3.0")
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import Gdk as _Gdk
+        from gi.repository import GLib as _GLib
+        from gi.repository import Gtk as _Gtk
+        from gi.repository import Pango as _Pango
+        from gi.repository import PangoCairo as _PangoCairo
+    except (ImportError, ValueError):
+        return False
+    try:
+        import cairo as _cairo
+    except ImportError:
+        _cairo = None
+    Gtk, Gdk, GLib, Pango, PangoCairo = _Gtk, _Gdk, _GLib, _Pango, _PangoCairo
+    cairo = _cairo
+    return True
+
+
+def text_layout(cr, text: str, size: float, bold: bool, max_width=None):
+    layout = PangoCairo.create_layout(cr)
+    desc = Pango.FontDescription()
+    desc.set_family("Sans")
+    desc.set_absolute_size(size * Pango.SCALE)
+    desc.set_weight(Pango.Weight.BOLD if bold else Pango.Weight.NORMAL)
+    layout.set_font_description(desc)
+    layout.set_text(text, -1)
+    if max_width:
+        layout.set_width(int(max_width * Pango.SCALE))
+        layout.set_ellipsize(Pango.EllipsizeMode.END)
+    return layout
+
+
+def draw_text(cr, text, x, y, size, bold, rgba, max_width=None, align="center"):
+    """Draw one line; `x`/`y` are its centre, or its left edge when left-aligned."""
+    layout = text_layout(cr, text, size, bold, max_width)
+    if max_width and align == "center":
+        layout.set_alignment(Pango.Alignment.CENTER)
+    width, height = layout.get_pixel_size()
+    cr.save()
+    cr.set_source_rgba(*rgba)
+    if align == "left":
+        cr.move_to(x, y - height / 2)
     else:
-        win.fullscreen()
+        cr.move_to(x - (max_width / 2 if max_width else width / 2), y - height / 2)
+    PangoCairo.show_layout(cr, layout)
+    cr.restore()
+    return width
 
-    area = Gtk.DrawingArea()
-    area.add_events(
-        Gdk.EventMask.POINTER_MOTION_MASK
-        | Gdk.EventMask.BUTTON_PRESS_MASK
-        | Gdk.EventMask.SCROLL_MASK
-    )
-    win.add(area)
 
-    # --- animation state ----------------------------------------------------
+def ease_out_back(p: float) -> float:
+    """Overshoot slightly, so the items feel like they snap into place."""
+    c1, c3 = 1.70158, 2.70158
+    p = p - 1.0
+    return 1.0 + c3 * p * p * p + c1 * p * p
+
+
+def ease_out_cubic(p: float) -> float:
+    return 1.0 - (1.0 - p) ** 3
+
+
+class RadialMenu:
+    """The overlay: a wheel of actions, a centre button and an edit mode.
+
+    Pressing the centre reveals two small tools in the same style: one opens
+    the editor window, the other switches the wheel itself into edit mode.
+    There the buttons are dragged around, a placeholder adds another one, and
+    clicking a button asks which application belongs on it - a search bar in
+    the launcher's own style slides in above the wheel while the button being
+    filled pulses. Every committed change is written straight to the
+    configuration; there is no save button to forget.
+    """
+
     OPEN_TIME = 0.34        # seconds until the wheel is fully unrolled
     ITEM_STAGGER = 0.045    # delay between neighbouring items
     CLOSE_TIME = 0.16
-    state = {
-        "start": time.monotonic(),
-        "closing_at": None,
-        "selected": 0,
-        "hover": -1,
-    }
+    TOOL_TIME = 0.18        # the tools unfolding above the centre
+    SEARCH_TIME = 0.22      # the wheel making room for the search bar
+    DRAG_SLOP = 7.0         # pixels before a press counts as a drag
+    MAX_HITS = 5
 
-    def ease_out_back(p: float) -> float:
-        """Overshoot slightly, so the items feel like they snap into place."""
-        c1, c3 = 1.70158, 2.70158
-        p = p - 1.0
-        return 1.0 + c3 * p * p * p + c1 * p * p
+    def __init__(self, cfg: dict, sound: "Sound") -> None:
+        self.cfg = cfg
+        self.general = cfg["general"]
+        self.actions = cfg["actions"]
+        self.sound = sound
+        self.skin = load_skin(self.general.get("menu_skin", "terracotta"))
+        self.dim = float(self.general.get("dim_opacity", 0.62))
+        self.title = str(self.general.get("menu_title", tr("menu_title_fallback")))
+        self.chosen: dict | None = None
 
-    def ease_out_cubic(p: float) -> float:
-        return 1.0 - (1.0 - p) ** 3
+        self.start = time.monotonic()
+        self.closing_at: float | None = None
+        self.selected = 0
+        self.hover = -1
+        self.hover_centre = False
+        self.hover_tool = -1
 
-    def progress() -> tuple[float, float]:
-        """Return (global fade 0..1, direction) for the current frame."""
+        self.tools_at: float | None = None      # when the tools opened
+        self.edit = False
+        self.drag_index = -1
+        self.drag_origin = (0.0, 0.0)
+        self.drag_pos: tuple[float, float] | None = None
+        self.dragging = False
+
+        self.search_slot = -1
+        self.search_at: float | None = None
+        self.search_text = ""
+        self.search_hits: list = []
+        self.search_index = 0
+        self.apps: list | None = None
+
+        self.size = (1280, 800)         # replaced by the real allocation
+        self.press_index = -1
+        self.composited = True
+        self.area = None
+
+    # -- time ---------------------------------------------------------------
+
+    def progress(self) -> float:
         now = time.monotonic()
-        if state["closing_at"] is not None:
-            p = (now - state["closing_at"]) / CLOSE_TIME
-            return max(0.0, 1.0 - p), -1.0
-        return min(1.0, (now - state["start"]) / OPEN_TIME), 1.0
+        if self.closing_at is not None:
+            return max(0.0, 1.0 - (now - self.closing_at) / self.CLOSE_TIME)
+        return min(1.0, (now - self.start) / self.OPEN_TIME)
 
-    def geometry(width: int, height: int):
-        n = len(actions)
-        cx, cy = width / 2.0, height / 2.0
-        # Grow with the screen, but never so far that labels leave the display.
+    def item_progress(self, index: int) -> float:
+        now = time.monotonic()
+        if self.closing_at is not None:
+            return max(0.0, 1.0 - (now - self.closing_at) / self.CLOSE_TIME)
+        span = self.OPEN_TIME - self.ITEM_STAGGER * max(1, len(self.actions)) * 0.5
+        elapsed = now - self.start - index * self.ITEM_STAGGER
+        return max(0.0, min(1.0, elapsed / max(0.05, span)))
+
+    def tools_progress(self) -> float:
+        if self.tools_at is None:
+            return 0.0
+        return min(1.0, (time.monotonic() - self.tools_at) / self.TOOL_TIME)
+
+    def search_progress(self) -> float:
+        if self.search_at is None:
+            return 0.0
+        return ease_out_cubic(min(1.0, (time.monotonic() - self.search_at) / self.SEARCH_TIME))
+
+    def pulse(self) -> float:
+        """0..1, breathing - the glow of the button waiting for an app."""
+        import math
+
+        return 0.5 + 0.5 * math.sin(time.monotonic() * 4.2)
+
+    # -- geometry -----------------------------------------------------------
+
+    def slot_count(self) -> int:
+        """Wheel positions: one per action, plus the placeholder in edit mode."""
+        return max(1, len(self.actions) + (1 if self.edit else 0))
+
+    def geometry(self, width: int, height: int):
+        search = self.search_progress()
+        cx, cy = width / 2.0, height / 2.0 + 54.0 * search
+        n = self.slot_count()
         radius = min(min(width, height) * 0.26, 320.0)
         radius = max(radius, n * 30.0, 170.0)
-        radius = min(radius, min(width, height) * 0.34)
+        radius = min(radius, min(width, height) * 0.34) * (1.0 - 0.20 * search)
         button = min(52.0, max(34.0, radius * 0.26))
         return cx, cy, radius, button, n
 
-    def item_center(index, cx, cy, radius, n, unroll):
-        # Start at the top, walk clockwise; items spiral out while unrolling.
-        angle = -math.pi / 2 + index * (2 * math.pi / n) - (1.0 - unroll) * 0.55
-        r = radius * unroll
-        return cx + math.cos(angle) * r, cy + math.sin(angle) * r
+    def slot_center(self, slot: int, cx, cy, radius, n, unroll: float = 1.0):
+        import math
 
-    def item_progress(index: int) -> float:
-        now = time.monotonic()
-        if state["closing_at"] is not None:
-            p = (now - state["closing_at"]) / CLOSE_TIME
-            return max(0.0, 1.0 - p)
-        elapsed = now - state["start"] - index * ITEM_STAGGER
-        return max(0.0, min(1.0, elapsed / (OPEN_TIME - ITEM_STAGGER * len(actions) * 0.5)))
+        angle = -math.pi / 2 + slot * (2 * math.pi / n) - (1.0 - unroll) * 0.55
+        distance = radius * unroll
+        return cx + math.cos(angle) * distance, cy + math.sin(angle) * distance
 
-    def layout_text(cr, text, size, weight_bold, max_width=None):
-        layout = PangoCairo.create_layout(cr)
-        desc = Pango.FontDescription()
-        desc.set_family("Sans")
-        desc.set_absolute_size(size * Pango.SCALE)
-        desc.set_weight(Pango.Weight.BOLD if weight_bold else Pango.Weight.NORMAL)
-        layout.set_font_description(desc)
-        layout.set_text(text, -1)
-        if max_width:
-            layout.set_width(int(max_width * Pango.SCALE))
-            layout.set_ellipsize(Pango.EllipsizeMode.END)
-            layout.set_alignment(Pango.Alignment.CENTER)
-        return layout
+    def order(self) -> list[int]:
+        """Action indices in drawing order, honouring a running drag."""
+        indices = list(range(len(self.actions)))
+        if self.dragging and 0 <= self.drag_index < len(indices):
+            indices.remove(self.drag_index)
+            indices.insert(self.drop_slot(), self.drag_index)
+        return indices
 
-    def draw_centered(cr, text, x, y, size, bold, rgba, max_width=None):
-        layout = layout_text(cr, text, size, bold, max_width)
-        w, h = layout.get_pixel_size()
-        cr.save()
-        cr.set_source_rgba(*rgba)
-        cr.move_to(x - (max_width / 2 if max_width else w / 2), y - h / 2)
-        PangoCairo.show_layout(cr, layout)
-        cr.restore()
+    def drop_slot(self) -> int:
+        """Where a dragged button would land, from the angle of the pointer."""
+        import math
 
-    def on_draw(widget, cr):
+        if self.drag_pos is None:
+            return max(0, self.drag_index)
+        width, height = self.size
+        cx, cy, _radius, _button, n = self.geometry(width, height)
+        x, y = self.drag_pos
+        angle = math.atan2(y - cy, x - cx) + math.pi / 2
+        step = 2 * math.pi / n
+        slot = int(round((angle % (2 * math.pi)) / step)) % n
+        return max(0, min(slot, len(self.actions) - 1))
+
+    def tool_centers(self, cx, cy, button):
+        """The two small tools, on a short arc above the centre."""
+        import math
+
+        spread = button * 0.92
+        lift = button * 1.35 * self.tools_progress()
+        size = button * 0.42
+        return [
+            (cx - spread, cy - lift - button * 0.35, size),
+            (cx + spread, cy - lift - button * 0.35, size),
+        ]
+
+    # -- painting -----------------------------------------------------------
+
+    def on_draw(self, widget, cr) -> bool:
+        import math
+
         width = widget.get_allocated_width()
         height = widget.get_allocated_height()
-        fade, _direction = progress()
+        self.size = (width, height)
+        fade = self.progress()
         fade_in = ease_out_cubic(min(1.0, fade * 1.6))
+        skin = self.skin
 
         # 1. the dim layer - this is what stops the desktop from bleeding through
         cr.set_operator(cairo.OPERATOR_SOURCE)
-        if composited and visual is not None:
-            cr.set_source_rgba(0.043, 0.039, 0.035, dim * fade_in)
+        if self.composited:
+            cr.set_source_rgba(*skin.backdrop[:3], self.dim * fade_in)
         else:
-            cr.set_source_rgb(0.043, 0.039, 0.035)
+            cr.set_source_rgb(*skin.backdrop[:3])
         cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
 
-        cx, cy, radius, button, n = geometry(width, height)
+        cx, cy, radius, button, n = self.geometry(width, height)
 
         # 2. a soft glow behind the wheel, so the centre reads as the focus
         glow = cairo.RadialGradient(cx, cy, radius * 0.15, cx, cy, radius * 1.9)
-        glow.add_color_stop_rgba(0.0, *ACCENT, 0.13 * fade_in)
-        glow.add_color_stop_rgba(1.0, *ACCENT, 0.0)
+        glow.add_color_stop_rgba(0.0, *skin.accent[:3], 0.13 * fade_in)
+        glow.add_color_stop_rgba(1.0, *skin.accent[:3], 0.0)
         cr.set_source(glow)
         cr.new_path()
         cr.arc(cx, cy, radius * 1.9, 0, 2 * math.pi)
         cr.fill()
 
-        # 3. title above the wheel
-        draw_centered(cr, title_text, cx, cy - radius - button - 52, 15, True,
-                      (*TEXT_BRIGHT, 0.92 * fade_in), max_width=520)
+        # 3. the header - the title, or the search bar once it slid in
+        if self.search_progress() > 0.01:
+            self.draw_search(cr, width, fade_in)
+        if self.search_slot < 0:
+            draw_text(cr, self.title, cx, cy - radius - button - 52, 15, True,
+                      (*skin.text[:3], 0.92 * fade_in), max_width=520)
 
-        selected = state["hover"] if state["hover"] >= 0 else state["selected"]
-
-        # 4. connecting ring - drawn as an arc that grows with the animation
-        ring_p = ease_out_cubic(min(1.0, fade * 1.2))
-        if ring_p > 0.02:
-            cr.set_source_rgba(1, 1, 1, 0.07 * fade_in)
+        # 4. connecting ring - an arc that grows with the animation
+        ring = ease_out_cubic(min(1.0, fade * 1.2))
+        if ring > 0.02:
+            cr.set_source_rgba(*skin.text[:3], 0.07 * fade_in)
             cr.set_line_width(1.0)
             cr.new_path()
-            cr.arc(cx, cy, radius, -math.pi / 2, -math.pi / 2 + 2 * math.pi * ring_p)
+            cr.arc(cx, cy, radius, -math.pi / 2, -math.pi / 2 + 2 * math.pi * ring)
             cr.stroke()
 
-        # 5. the items
-        for index, action in enumerate(actions):
-            p = item_progress(index)
-            if p <= 0.0:
+        self.draw_items(cr, cx, cy, radius, button, n, fade_in)
+        self.draw_centre(cr, cx, cy, button, fade_in)
+
+        # 7. what the current item does, plus the keys that apply right now
+        if self.search_slot < 0 and not self.edit:
+            index = self.hover if self.hover >= 0 else self.selected
+            if 0 <= index < len(self.actions):
+                subtitle = str(self.actions[index].get("subtitle", ""))
+                if subtitle:
+                    draw_text(cr, subtitle, cx, cy + radius + button + 74, 13.0, False,
+                              (*skin.text[:3], 0.78 * fade_in), max_width=620)
+        if self.search_slot >= 0:
+            hint = tr("hint_search")
+        elif self.edit:
+            hint = tr("hint_edit")
+        else:
+            hint = tr("hint_radial")
+        draw_text(cr, hint, cx, cy + radius + button + 104, 11.5, False,
+                  (*skin.text_dim[:3], 0.65 * fade_in), max_width=760)
+        return False
+
+    def draw_items(self, cr, cx, cy, radius, button, n, fade_in) -> None:
+        selected = self.hover if self.hover >= 0 else self.selected
+        for slot, index in enumerate(self.order()):
+            if self.dragging and index == self.drag_index:
+                continue          # it follows the pointer instead
+            progress = self.item_progress(index)
+            if progress <= 0.0:
                 continue
-            unroll = ease_out_back(p)
-            alpha = min(1.0, p * 1.5) * fade_in
-            x, y = item_center(index, cx, cy, radius, n, unroll)
-            is_sel = index == selected
-            scale = (0.55 + 0.45 * p) * (1.06 if is_sel else 1.0)
-            br = button * scale
+            x, y = self.slot_center(slot, cx, cy, radius, n, ease_out_back(progress))
+            is_selected = index == selected and not self.dragging
+            scale = (0.55 + 0.45 * progress) * (1.06 if is_selected else 1.0)
+            self.draw_item(cr, index, x, y, button * scale,
+                           min(1.0, progress * 1.5) * fade_in, is_selected)
 
-            if is_sel:
-                cr.set_source_rgba(*ACCENT, 0.22 * alpha)
-                cr.new_path()
-                cr.arc(x, y, br + 9, 0, 2 * math.pi)
-                cr.fill()
+        if self.edit and not self.dragging:
+            progress = self.item_progress(len(self.actions))
+            x, y = self.slot_center(len(self.actions), cx, cy, radius, n,
+                                    ease_out_back(max(0.2, progress)))
+            self.draw_add_slot(cr, x, y, button * 0.86, fade_in,
+                               self.hover == len(self.actions))
 
-            cr.set_source_rgba(0.109, 0.102, 0.094, 0.97 * alpha)
+        if self.dragging and self.drag_pos is not None:
+            x, y = self.drag_pos
+            self.draw_item(cr, self.drag_index, x, y, button * 1.14, fade_in, True, lifted=True)
+
+    def draw_item(self, cr, index: int, x: float, y: float, radius: float,
+                  alpha: float, selected: bool, lifted: bool = False) -> None:
+        import math
+
+        skin = self.skin
+        action = self.actions[index]
+        empty = not str(action.get("command", "")).strip()
+
+        if index == self.search_slot:
+            # The button waiting for an application breathes until it has one.
+            pulse = self.pulse()
+            cr.set_source_rgba(*skin.accent[:3], (0.10 + 0.20 * pulse) * alpha)
             cr.new_path()
-            cr.arc(x, y, br, 0, 2 * math.pi)
-            cr.fill_preserve()
-            if is_sel:
-                cr.set_source_rgba(*ACCENT, 0.95 * alpha)
-                cr.set_line_width(2.0)
-            else:
-                cr.set_source_rgba(1, 1, 1, 0.12 * alpha)
-                cr.set_line_width(1.0)
+            cr.arc(x, y, radius + 10 + 9 * pulse, 0, 2 * math.pi)
+            cr.fill()
+            cr.set_source_rgba(*skin.accent[:3], (0.35 + 0.45 * pulse) * alpha)
+            cr.set_line_width(2.0)
+            cr.new_path()
+            cr.arc(x, y, radius + 6, 0, 2 * math.pi)
             cr.stroke()
+        elif lifted:
+            cr.set_source_rgba(0, 0, 0, 0.35 * alpha)
+            cr.new_path()
+            cr.arc(x, y + radius * 0.18, radius, 0, 2 * math.pi)
+            cr.fill()
 
+        paint_button(cr, skin, x, y, radius, index, selected, alpha, empty)
+
+        if empty:
+            cr.set_source_rgba(*skin.text_dim[:3], 0.55 * alpha)
+            cr.set_line_width(1.6)
+            cr.set_dash([5.0, 5.0])
+            button_path(cr, skin, x, y, radius - 1)
+            cr.stroke()
+            cr.set_dash([])
+
+        cr.save()
+        cr.translate(x, y)
+        icon = "plus" if empty else icon_for(action)
+        draw_icon(cr, icon, radius * 0.92, button_icon_rgba(skin, selected, alpha))
+        cr.restore()
+
+        if index < 9 and not lifted:
+            self.draw_badge(cr, x + radius * 0.74, y - radius * 0.74, str(index + 1),
+                            skin.accent, alpha)
+        if self.edit and not lifted and self.hover == index and self.search_slot < 0:
+            # Removing an entry belongs where the entry is, not in a submenu.
+            bx, by = x - radius * 0.74, y - radius * 0.74
+            cr.set_source_rgba(*skin.backdrop[:3], 0.95 * alpha)
+            cr.new_path()
+            cr.arc(bx, by, 11.0, 0, 2 * math.pi)
+            cr.fill_preserve()
+            cr.set_source_rgba(*skin.accent[:3], 0.75 * alpha)
+            cr.set_line_width(1.0)
+            cr.stroke()
             cr.save()
-            cr.translate(x, y)
-            icon_rgba = (*ACCENT, alpha) if is_sel else (*TEXT_BRIGHT, 0.88 * alpha)
-            draw_icon(cr, icon_for(action), br * 0.92, icon_rgba)
+            cr.translate(bx, by)
+            draw_icon(cr, "cross", 11.0, (*skin.accent[:3], alpha))
             cr.restore()
 
-            # index badge
-            if index < 9:
-                bx, by = x + br * 0.74, y - br * 0.74
-                cr.set_source_rgba(0.043, 0.039, 0.035, 0.95 * alpha)
-                cr.new_path()
-                cr.arc(bx, by, 10.5, 0, 2 * math.pi)
-                cr.fill_preserve()
-                cr.set_source_rgba(*ACCENT, 0.55 * alpha)
-                cr.set_line_width(1.0)
-                cr.stroke()
-                draw_centered(cr, str(index + 1), bx, by, 10.5, True, (*ACCENT, alpha))
+        label = str(action.get("label") or "")
+        if empty and not label:
+            label = tr("slot_empty")
+        draw_text(cr, label, x, y + radius + 17, 12.5, selected,
+                  (*skin.text[:3], alpha) if selected else (*skin.text_dim[:3], 0.95 * alpha),
+                  max_width=max(170.0, radius * 4.0))
 
-            label = str(action.get("label", action.get("id", "?")))
-            draw_centered(cr, label, x, y + br + 17, 12.5, is_sel,
-                          ((*TEXT_BRIGHT, alpha) if is_sel else (*TEXT_DIM, 0.95 * alpha)),
-                          max_width=max(170.0, radius * 1.25))
+    def draw_add_slot(self, cr, x, y, radius, alpha, hovered) -> None:
+        skin = self.skin
+        cr.set_source_rgba(*skin.text[:3], (0.10 if hovered else 0.05) * alpha)
+        button_path(cr, skin, x, y, radius)
+        cr.fill()
+        cr.set_source_rgba(*(skin.accent if hovered else skin.text_dim)[:3],
+                           (0.9 if hovered else 0.5) * alpha)
+        cr.set_line_width(1.8)
+        cr.set_dash([6.0, 6.0])
+        button_path(cr, skin, x, y, radius)
+        cr.stroke()
+        cr.set_dash([])
+        cr.save()
+        cr.translate(x, y)
+        draw_icon(cr, "plus", radius * 0.8,
+                  (*(skin.accent if hovered else skin.text_dim)[:3], alpha))
+        cr.restore()
+        draw_text(cr, tr("cfg_add"), x, y + radius + 17, 12.0, hovered,
+                  (*(skin.accent if hovered else skin.text_dim)[:3], 0.95 * alpha),
+                  max_width=220)
 
-        # 6. centre medallion
-        cr.set_source_rgba(0.086, 0.082, 0.075, 0.92 * fade_in)
+    def draw_badge(self, cr, x, y, text, color, alpha) -> None:
+        import math
+
+        cr.set_source_rgba(*self.skin.backdrop[:3], 0.95 * alpha)
         cr.new_path()
-        cr.arc(cx, cy, button * 0.82, 0, 2 * math.pi)
+        cr.arc(x, y, 10.5, 0, 2 * math.pi)
         cr.fill_preserve()
-        cr.set_source_rgba(1, 1, 1, 0.07 * fade_in)
+        cr.set_source_rgba(*color[:3], 0.55 * alpha)
         cr.set_line_width(1.0)
+        cr.stroke()
+        draw_text(cr, text, x, y, 10.5, True, (*color[:3], alpha))
+
+    def draw_centre(self, cr, cx, cy, button, fade_in) -> None:
+        skin = self.skin
+        radius = button * 0.82
+        active = self.hover_centre or self.tools_at is not None
+
+        cr.set_source_rgba(*shade(skin.button, 0.78)[:3], 0.92 * fade_in)
+        button_path(cr, skin, cx, cy, radius)
+        cr.fill_preserve()
+        cr.set_source_rgba(*skin.accent[:3], (0.55 if active else 0.10) * fade_in)
+        cr.set_line_width(2.0 if active else 1.0)
         cr.stroke()
         cr.save()
         cr.translate(cx, cy)
-        draw_icon(cr, "sparkle", button * 0.72, (*ACCENT, 0.85 * fade_in))
+        draw_icon(cr, "sparkle", button * 0.72,
+                  (*skin.accent[:3], (1.0 if active else 0.85) * fade_in))
         cr.restore()
 
-        # 7. subtitle of the current item plus the key hints
-        if 0 <= selected < len(actions):
-            subtitle = str(actions[selected].get("subtitle", ""))
-            if subtitle:
-                draw_centered(cr, subtitle, cx, cy + radius + button + 74, 13.0, False,
-                              (*TEXT_BRIGHT, 0.78 * fade_in), max_width=620)
-        draw_centered(cr, tr("hint_radial"),
-                      cx, cy + radius + button + 104, 11.5, False,
-                      (*TEXT_DIM, 0.65 * fade_in), max_width=660)
-        return False
+        opening = self.tools_progress()
+        if opening <= 0.01 or self.dragging:
+            return          # a dragged button must not slide behind them
+        for i, (tx, ty, size) in enumerate(self.tool_centers(cx, cy, button)):
+            chosen = i == self.hover_tool or (i == 1 and self.edit)
+            paint_button(cr, skin, tx, ty, size, 0, chosen, opening * fade_in)
+            cr.save()
+            cr.translate(tx, ty)
+            draw_icon(cr, ("gear", "pencil")[i], size * 0.95,
+                      button_icon_rgba(skin, chosen, opening * fade_in))
+            cr.restore()
+        if self.hover_tool >= 0:
+            # Below the centre: above it the tools would sit on the label of
+            # whatever button happens to be at the top of the wheel.
+            label = (tr("tool_config"), tr("tool_edit"))[self.hover_tool]
+            draw_text(cr, label, cx, cy + button * 1.45, 12.0, False,
+                      (*skin.text[:3], 0.92 * opening * fade_in), max_width=360)
 
-    def tick():
-        if not win.get_realized():
-            return False
-        area.queue_draw()
-        if state["closing_at"] is not None:
-            if time.monotonic() - state["closing_at"] >= CLOSE_TIME:
-                win.destroy()
-                return False
-        return True
+    def draw_search(self, cr, width: int, fade_in: float) -> None:
+        skin = self.skin
+        shown = self.search_progress()
+        alpha = shown * fade_in
+        box_w = min(620.0, max(380.0, width * 0.46))
+        box_h = 48.0
+        x = (width - box_w) / 2.0
+        y = 62.0 - 18.0 * (1.0 - shown)
 
-    def begin_close(action=None) -> None:
-        if state["closing_at"] is not None:
-            return
-        if action is not None:
-            chosen["action"] = action
-            sound.play("launch")
+        rounded_rect_path(cr, x, y, box_w, box_h, box_h / 2)
+        cr.set_source_rgba(*lighten(skin.button, 0.06)[:3], 0.97 * alpha)
+        cr.fill_preserve()
+        cr.set_source_rgba(*skin.accent[:3], 0.65 * alpha)
+        cr.set_line_width(1.6)
+        cr.stroke()
+
+        cr.save()
+        cr.translate(x + 30, y + box_h / 2)
+        draw_icon(cr, "search", 21, (*skin.accent[:3], 0.9 * alpha))
+        cr.restore()
+
+        text_x = x + 54
+        if self.search_text:
+            width_used = draw_text(cr, self.search_text, text_x, y + box_h / 2, 16, False,
+                                   (*skin.text[:3], alpha), align="left")
         else:
-            sound.play("menu-dismiss")
-        state["closing_at"] = time.monotonic()
+            width_used = 0
+            draw_text(cr, tr("search_placeholder"), text_x, y + box_h / 2, 16, False,
+                      (*skin.text_dim[:3], 0.75 * alpha), align="left")
+        if int(time.monotonic() * 2) % 2 == 0:
+            cr.set_source_rgba(*skin.accent[:3], alpha)
+            cr.rectangle(text_x + width_used + 3, y + box_h / 2 - 11, 2, 22)
+            cr.fill()
 
-    def hit_test(mx, my):
-        width = area.get_allocated_width()
-        height = area.get_allocated_height()
-        cx, cy, radius, button, n = geometry(width, height)
-        for index in range(len(actions)):
-            p = item_progress(index)
-            x, y = item_center(index, cx, cy, radius, n, ease_out_back(p) if p > 0 else 0.0)
-            if (mx - x) ** 2 + (my - y) ** 2 <= (button * 1.22) ** 2:
-                return index
+        row_h = 42.0
+        for i, app in enumerate(self.search_hits[:self.MAX_HITS]):
+            row_y = y + box_h + 12 + i * row_h
+            middle = row_y + (row_h - 6) / 2
+            chosen = i == self.search_index
+            if chosen:
+                rounded_rect_path(cr, x, row_y, box_w, row_h - 6, 11)
+                cr.set_source_rgba(*skin.accent[:3], 0.22 * alpha)
+                cr.fill()
+            cr.save()
+            cr.translate(x + 30, middle)
+            draw_icon(cr, app.icon, 21,
+                      (*(skin.accent if chosen else skin.text)[:3], 0.95 * alpha))
+            cr.restore()
+            draw_text(cr, app.name, text_x, middle - (8 if app.comment else 0), 13.5, chosen,
+                      (*skin.text[:3], alpha), max_width=box_w - 90, align="left")
+            if app.comment:
+                draw_text(cr, app.comment, text_x, middle + 9, 11.0, False,
+                          (*skin.text_dim[:3], 0.9 * alpha), max_width=box_w - 90, align="left")
+        if self.search_text and not self.search_hits:
+            draw_text(cr, tr("cfg_apps_none"), text_x, y + box_h + 30, 13.0, False,
+                      (*skin.text_dim[:3], alpha), align="left")
+
+    # -- what is under the pointer ------------------------------------------
+
+    def search_box(self, width: int):
+        box_w = min(620.0, max(380.0, width * 0.46))
+        box_h = 48.0
+        shown = self.search_progress()
+        return (width - box_w) / 2.0, 62.0 - 18.0 * (1.0 - shown), box_w, box_h
+
+    def search_hit_at(self, mx, my, width):
+        x, y, box_w, box_h = self.search_box(width)
+        if not x <= mx <= x + box_w:
+            return -1
+        row_h = 42.0
+        for i in range(len(self.search_hits[:self.MAX_HITS])):
+            row_y = y + box_h + 12 + i * row_h
+            if row_y <= my <= row_y + row_h - 6:
+                return i
         return -1
 
-    def on_motion(_widget, event):
-        index = hit_test(event.x, event.y)
-        if index != state["hover"]:
-            state["hover"] = index
+    def hit(self, mx: float, my: float):
+        """(kind, index) of whatever sits under the pointer."""
+        width, height = self.size
+        cx, cy, radius, button, n = self.geometry(width, height)
+
+        if self.search_slot >= 0:
+            index = self.search_hit_at(mx, my, width)
             if index >= 0:
-                state["selected"] = index
-                sound.play("toggle-show")
-            area.queue_draw()
+                return ("hit", index)
+            x, y, box_w, box_h = self.search_box(width)
+            if x <= mx <= x + box_w and y <= my <= y + box_h:
+                return ("searchbox", -1)
+
+        if self.tools_at is not None and self.tools_progress() > 0.35:
+            for i, (tx, ty, size) in enumerate(self.tool_centers(cx, cy, button)):
+                if (mx - tx) ** 2 + (my - ty) ** 2 <= (size * 1.45) ** 2:
+                    return ("tool", i)
+        if (mx - cx) ** 2 + (my - cy) ** 2 <= (button * 0.9) ** 2:
+            return ("centre", -1)
+
+        for slot, index in enumerate(self.order()):
+            unroll = ease_out_back(max(0.001, self.item_progress(index)))
+            x, y = self.slot_center(slot, cx, cy, radius, n, unroll)
+            if self.edit and self.hover == index and self.search_slot < 0:
+                bx, by = x - button * 0.74, y - button * 0.74
+                if (mx - bx) ** 2 + (my - by) ** 2 <= 13.0 ** 2:
+                    return ("remove", index)
+            if (mx - x) ** 2 + (my - y) ** 2 <= (button * 1.22) ** 2:
+                return ("item", index)
+
+        if self.edit and not self.dragging:
+            x, y = self.slot_center(len(self.actions), cx, cy, radius, n)
+            if (mx - x) ** 2 + (my - y) ** 2 <= (button * 1.1) ** 2:
+                return ("add", -1)
+        return ("none", -1)
+
+    # -- pointer and keyboard -----------------------------------------------
+
+    def on_motion(self, _widget, event) -> bool:
+        self.drag_pos = (event.x, event.y)
+        if (self.edit and self.press_index >= 0 and not self.dragging
+                and self.search_slot < 0):
+            dx = event.x - self.drag_origin[0]
+            dy = event.y - self.drag_origin[1]
+            if dx * dx + dy * dy > self.DRAG_SLOP ** 2:
+                self.dragging = True
+                self.drag_index = self.press_index
+                self.sound.play("toggle-show")
+
+        kind, index = self.hit(event.x, event.y)
+        hover, hover_tool, hover_centre = -1, -1, False
+        if kind == "tool":
+            hover_tool = index
+        elif kind == "centre":
+            hover_centre = True
+        elif kind in ("item", "remove"):
+            hover = index
+        elif kind == "add":
+            hover = len(self.actions)
+        elif kind == "hit":
+            self.search_index = index
+
+        if not self.dragging and hover != self.hover and 0 <= hover < len(self.actions):
+            self.selected = hover
+            self.sound.play("toggle-show")
+        self.hover, self.hover_tool, self.hover_centre = hover, hover_tool, hover_centre
+        self.area.queue_draw()
         return True
 
-    def on_button(_widget, event):
-        index = hit_test(event.x, event.y)
-        if index >= 0:
-            begin_close(actions[index])
+    def on_press(self, _widget, event) -> bool:
+        self.press_index = -1
+        kind, index = self.hit(event.x, event.y)
+        self.drag_origin = (event.x, event.y)
+        self.drag_pos = (event.x, event.y)
+
+        if kind == "hit":
+            self.search_index = index
+            self.take_hit()
+        elif kind == "searchbox":
+            pass
+        elif self.search_slot >= 0:
+            self.cancel_search()
+        elif kind == "tool":
+            self.use_tool(index)
+        elif kind == "centre":
+            self.toggle_tools()
+        elif kind == "remove":
+            self.remove_slot(index)
+        elif kind == "add":
+            self.add_slot()
+        elif kind == "item":
+            if self.edit:
+                self.press_index = index        # a click, unless it becomes a drag
+                self.selected = index
+            else:
+                self.begin_close(self.actions[index])
         else:
-            begin_close(None)
+            self.begin_close(None)
+        self.area.queue_draw()
         return True
 
-    def step_selection(delta: int) -> None:
-        state["hover"] = -1
-        state["selected"] = (state["selected"] + delta) % len(actions)
-        area.queue_draw()
+    def on_release(self, _widget, event) -> bool:
+        if self.dragging:
+            self.finish_drag()
+        elif self.press_index >= 0 and self.edit:
+            self.open_search(self.press_index)
+        self.press_index = -1
+        self.area.queue_draw()
+        return True
 
-    def on_scroll(_widget, event):
+    def step(self, delta: int) -> None:
+        count = self.slot_count() if self.edit else len(self.actions)
+        if count <= 0:
+            return
+        self.hover = -1
+        self.selected = (self.selected + delta) % count
+        self.area.queue_draw()
+
+    def on_scroll(self, _widget, event) -> bool:
+        if self.search_slot >= 0:
+            return True
         if event.direction == Gdk.ScrollDirection.UP:
-            step_selection(-1)
+            self.step(-1)
         elif event.direction == Gdk.ScrollDirection.DOWN:
-            step_selection(1)
+            self.step(1)
         return True
 
-    def on_key(_widget, event):
+    def on_key(self, _widget, event) -> bool:
         name = Gdk.keyval_name(event.keyval) or ""
+
+        if self.search_slot >= 0:
+            if name == "Escape":
+                self.cancel_search()
+            elif name == "BackSpace":
+                self.search_text = self.search_text[:-1]
+                self.refresh_hits()
+            elif name in ("Return", "KP_Enter"):
+                self.take_hit()
+            elif name in ("Down", "Tab"):
+                if self.search_hits:
+                    self.search_index = (self.search_index + 1) % len(self.search_hits)
+            elif name in ("Up", "ISO_Left_Tab"):
+                if self.search_hits:
+                    self.search_index = (self.search_index - 1) % len(self.search_hits)
+            elif event.string and event.string.isprintable():
+                self.search_text += event.string
+                self.refresh_hits()
+            self.area.queue_draw()
+            return True
+
         if name == "Escape":
-            begin_close(None)
+            if self.edit:
+                self.leave_edit()
+            elif self.tools_at is not None:
+                self.toggle_tools()
+            else:
+                self.begin_close(None)
+            self.area.queue_draw()
             return True
         if name in ("Return", "KP_Enter", "space"):
-            begin_close(actions[state["selected"]])
+            if self.edit:
+                if self.selected >= len(self.actions):
+                    self.add_slot()
+                else:
+                    self.open_search(self.selected)
+            elif self.actions:
+                self.begin_close(self.actions[self.selected])
+            self.area.queue_draw()
+            return True
+        if name in ("Delete", "BackSpace") and self.edit:
+            self.remove_slot(self.selected)
+            self.area.queue_draw()
             return True
         if name in ("Right", "Down", "Tab"):
-            step_selection(1)
+            self.step(1)
             return True
         if name in ("Left", "Up", "ISO_Left_Tab"):
-            step_selection(-1)
+            self.step(-1)
             return True
         if len(name) == 1 and name.isdigit() and name != "0":
             wanted = int(name) - 1
-            if wanted < len(actions):
-                state["selected"] = wanted
-                begin_close(actions[wanted])
+            if self.edit:
+                if wanted < self.slot_count():
+                    self.selected = wanted
+                    self.area.queue_draw()
+            elif wanted < len(self.actions):
+                self.selected = wanted
+                self.begin_close(self.actions[wanted])
             return True
         return False
 
-    area.connect("draw", on_draw)
-    area.connect("motion-notify-event", on_motion)
-    area.connect("button-press-event", on_button)
-    area.connect("scroll-event", on_scroll)
-    win.connect("key-press-event", on_key)
-    win.connect("destroy", Gtk.main_quit)
+    # -- editing ------------------------------------------------------------
 
-    close_on_focus_loss = bool(general.get("close_on_focus_loss", True))
-    focus_state = {"had_focus": False}
-    opened_at = time.monotonic()
+    def toggle_tools(self) -> None:
+        if self.tools_at is None:
+            self.tools_at = time.monotonic()
+            self.sound.play("toggle-show")
+        else:
+            if self.edit:
+                self.leave_edit()
+            else:
+                self.sound.play("toggle-hide")
+            self.tools_at = None
 
-    def on_focus_in(*_args) -> bool:
-        focus_state["had_focus"] = True
-        return False
+    def use_tool(self, index: int) -> None:
+        if index == 0:                      # the editor window
+            launch_resolved({"command": "@configure"}, self.sound)
+            self.begin_close(None, cue=False)
+            self.sound.play("launch")
+        elif self.edit:
+            self.leave_edit()
+        else:
+            self.enter_edit()
 
-    def on_focus_out(*_args) -> bool:
-        if (close_on_focus_loss and focus_state["had_focus"]
-                and time.monotonic() - opened_at > 0.6):
-            begin_close(None)
-        return False
+    def enter_edit(self) -> None:
+        self.edit = True
+        if self.tools_at is None:
+            self.tools_at = time.monotonic()
+        self.sound.play("menu-open")
 
-    win.connect("focus-in-event", on_focus_in)
-    win.connect("focus-out-event", on_focus_out)
+    def leave_edit(self) -> None:
+        self.cancel_search()
+        self.edit = False
+        # Placeholders nobody filled never reach the configuration.
+        self.actions[:] = [a for a in self.actions if str(a.get("command", "")).strip()]
+        self.selected = max(0, min(self.selected, len(self.actions) - 1))
+        self.sound.play("menu-dismiss")
 
-    win.show_all()
-    win.present_with_time(Gdk.CURRENT_TIME)
-    GLib.timeout_add(
-        60, lambda: (win.get_window() and win.get_window().focus(Gdk.CURRENT_TIME), False)[1]
-    )
-    GLib.timeout_add(16, tick)
+    def add_slot(self) -> None:
+        self.actions.append({"id": "", "label": "", "subtitle": "", "command": "",
+                             "icon": "sparkle", "window_class": "", "primary": False})
+        self.selected = len(self.actions) - 1
+        self.open_search(self.selected)
 
-    sound.play("menu-open")
-    signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
-    Gtk.main()
+    def remove_slot(self, index: int) -> None:
+        if not 0 <= index < len(self.actions):
+            return
+        assigned = [i for i, action in enumerate(self.actions)
+                    if str(action.get("command", "")).strip()]
+        if assigned == [index]:
+            # save() refuses to write an empty menu, so removing the last
+            # entry would leave the wheel and the file disagreeing.
+            self.sound.play("error")
+            return
+        if self.search_slot == index:
+            self.cancel_search()
+        del self.actions[index]
+        self.selected = max(0, min(self.selected, len(self.actions) - 1))
+        self.sound.play("toggle-hide")
+        self.save()
 
-    try:
-        pidfile.unlink()
-    except OSError:
-        pass
+    def open_search(self, index: int) -> None:
+        if not 0 <= index < len(self.actions):
+            return
+        self.search_slot = index
+        self.search_at = time.monotonic()
+        self.search_text = ""
+        self.search_index = 0
+        if self.apps is None:
+            self.apps = read_apps()
+        self.refresh_hits()
+        self.sound.play("toggle-show")
 
-    if chosen.get("action"):
-        launch_resolved(chosen["action"], sound)
+    def cancel_search(self) -> None:
+        if self.search_slot < 0:
+            return
+        self.search_slot = -1
+        self.search_at = None
+        self.search_text = ""
+        self.search_hits = []
+        self.sound.play("menu-dismiss")
+
+    def refresh_hits(self) -> None:
+        query = self.search_text.strip().lower()
+        scored = []
+        for app in self.apps or []:
+            score = match_score(app, query)
+            if score >= 0:
+                scored.append((score, app.name.lower(), app))
+        scored.sort(key=lambda entry: (entry[0], entry[1]))
+        self.search_hits = [entry[2] for entry in scored[:self.MAX_HITS]]
+        self.search_index = 0
+
+    def take_hit(self) -> None:
+        if not self.search_hits or self.search_slot < 0:
+            return
+        app = self.search_hits[min(self.search_index, len(self.search_hits) - 1)]
+        index = self.search_slot
+        self.search_slot = -1
+        self.search_at = None
+        self.search_text = ""
+        self.search_hits = []
+        action = self.actions[index]
+        action.update({
+            "id": slugify(app.name) or action.get("id", ""),
+            "label": app.name,
+            "subtitle": app.comment,
+            "command": f"@terminal {app.command}" if app.terminal else app.command,
+            "window_class": app.window_class,
+            "icon": app.icon,
+        })
+        self.selected = index
+        self.sound.play("toggle-show")
+        self.save()
+
+    def finish_drag(self) -> None:
+        target = self.drop_slot()
+        self.dragging = False
+        if 0 <= self.drag_index < len(self.actions) and target != self.drag_index:
+            self.actions.insert(target, self.actions.pop(self.drag_index))
+            self.selected = target
+            self.sound.play("toggle-show")
+            self.save()
+        self.drag_index = -1
+
+    def save(self) -> None:
+        """Write the configuration - edit mode has no save button to forget."""
+        keep = [a for a in self.actions if str(a.get("command", "")).strip()]
+        if not keep:
+            return
+        try:
+            save_config(normalise_config(self.general, keep))
+        except OSError as exc:
+            warn(tr("cfg_save_failed", error=exc))
+            self.sound.play("error")
+
+    def begin_close(self, action=None, cue: bool = True) -> None:
+        if self.closing_at is not None:
+            return
+        if action is not None:
+            self.chosen = action
+            self.sound.play("launch")
+        elif cue:
+            self.sound.play("menu-dismiss")
+        self.closing_at = time.monotonic()
+
+    # -- the window ---------------------------------------------------------
+
+    def run(self) -> None:
+        pidfile = runtime_dir() / "menu.pid"
+        pidfile.write_text(f"{os.getpid()}\n")
+
+        win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        # A stable title helps window managers (and scripted tests) identify
+        # the overlay. set_wmclass() would too, but it is deprecated in GTK 3
+        # and GTK derives WM_CLASS from the program name anyway.
+        win.set_title("copilot-key")
+        win.set_decorated(False)
+        win.set_keep_above(True)
+        win.set_skip_taskbar_hint(True)
+        win.set_skip_pager_hint(True)
+        win.set_type_hint(Gdk.WindowTypeHint.SPLASHSCREEN)
+        win.set_app_paintable(True)
+
+        screen = win.get_screen()
+        visual = screen.get_rgba_visual()
+        self.composited = bool(screen.is_composited()) and visual is not None
+        if self.composited:
+            win.set_visual(visual)
+
+        display = Gdk.Display.get_default()
+        geo = None
+        try:
+            pointer = display.get_default_seat().get_pointer()
+            _screen, px, py = pointer.get_position()
+            geo = display.get_monitor_at_point(px, py).get_geometry()
+        except Exception:
+            monitor = display.get_primary_monitor() if hasattr(display, "get_primary_monitor") else None
+            if monitor is not None:
+                geo = monitor.get_geometry()
+        if geo is not None:
+            win.move(geo.x, geo.y)
+            win.set_default_size(geo.width, geo.height)
+            win.resize(geo.width, geo.height)
+            self.size = (geo.width, geo.height)
+        else:
+            win.fullscreen()
+
+        self.area = Gtk.DrawingArea()
+        self.area.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK
+            | Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.SCROLL_MASK
+        )
+        win.add(self.area)
+
+        def tick() -> bool:
+            if not win.get_realized():
+                return False
+            self.area.queue_draw()
+            if self.closing_at is not None and \
+                    time.monotonic() - self.closing_at >= self.CLOSE_TIME:
+                win.destroy()
+                return False
+            return True
+
+        self.area.connect("draw", self.on_draw)
+        self.area.connect("motion-notify-event", self.on_motion)
+        self.area.connect("button-press-event", self.on_press)
+        self.area.connect("button-release-event", self.on_release)
+        self.area.connect("scroll-event", self.on_scroll)
+        win.connect("key-press-event", self.on_key)
+        win.connect("destroy", Gtk.main_quit)
+
+        close_on_focus_loss = bool(self.general.get("close_on_focus_loss", True))
+        focus_state = {"had_focus": False}
+        opened_at = time.monotonic()
+
+        def on_focus_in(*_args) -> bool:
+            focus_state["had_focus"] = True
+            return False
+
+        def on_focus_out(*_args) -> bool:
+            # Editing means dialogs and a lot of clicking; a bounced focus
+            # must not throw the work away halfway through.
+            if (close_on_focus_loss and focus_state["had_focus"] and not self.edit
+                    and time.monotonic() - opened_at > 0.6):
+                self.begin_close(None)
+            return False
+
+        win.connect("focus-in-event", on_focus_in)
+        win.connect("focus-out-event", on_focus_out)
+
+        win.show_all()
+        win.present_with_time(Gdk.CURRENT_TIME)
+        GLib.timeout_add(
+            60, lambda: (win.get_window() and win.get_window().focus(Gdk.CURRENT_TIME), False)[1]
+        )
+        GLib.timeout_add(16, tick)
+
+        self.sound.play("menu-open")
+        signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
+        Gtk.main()
+
+        try:
+            pidfile.unlink()
+        except OSError:
+            pass
+
+        if self.chosen is not None:
+            launch_resolved(self.chosen, self.sound)
+
+
+def show_radial_menu(cfg: dict, sound: "Sound") -> None:
+    """Radial overlay menu - the wheel, its centre button and its edit mode."""
+    RadialMenu(cfg, sound).run()
 
 
 def show_list_menu(cfg: dict, sound: "Sound") -> None:
@@ -997,26 +2540,30 @@ def show_list_menu(cfg: dict, sound: "Sound") -> None:
     chosen: dict = {}
 
     # Opaque on purpose: an RGBA visual without a paint handler would let the
-    # windows underneath shine through and make the text unreadable.
-    css = b"""
-    window.copilot-menu { background-color: #171614; border: 1px solid rgba(255,255,255,0.09); }
+    # windows underneath shine through and make the text unreadable. The
+    # colours come from the same skin the wheel uses.
+    skin = load_skin(cfg["general"].get("menu_skin", "terracotta"))
+    css = f"""
+    window.copilot-menu {{ background-color: {css_rgba(skin.backdrop, 1.0)};
+                           border: 1px solid {css_rgba(skin.text, 0.09)}; }}
     window.copilot-menu list,
     window.copilot-menu listbox,
-    window.copilot-menu row { background-color: transparent; background-image: none; border: none; }
-    window.copilot-menu row { border-radius: 10px; padding: 9px 10px; }
-    window.copilot-menu row:hover { background-color: rgba(217, 119, 87, 0.10); }
-    window.copilot-menu row:selected {
-        background-color: rgba(217, 119, 87, 0.22);
-        box-shadow: inset 2px 0 0 #D97757;
-    }
-    .cp-title  { color: #F2EFEB; font-size: 15px; font-weight: 700; }
-    .cp-hint   { color: #7E7872; font-size: 11px; }
-    .cp-label  { color: #F2EFEB; font-size: 14px; font-weight: 600; }
-    .cp-sub    { color: #A39C94; font-size: 11px; }
-    .cp-index  { color: #D97757; font-size: 12px; font-weight: 700; }
-    window.copilot-menu row:selected .cp-label { color: #FFFFFF; }
-    window.copilot-menu row:selected .cp-sub   { color: #C8BFB6; }
-    """
+    window.copilot-menu row {{ background-color: transparent; background-image: none;
+                               border: none; }}
+    window.copilot-menu row {{ border-radius: 10px; padding: 9px 10px; }}
+    window.copilot-menu row:hover {{ background-color: {css_rgba(skin.accent, 0.10)}; }}
+    window.copilot-menu row:selected {{
+        background-color: {css_rgba(skin.accent, 0.22)};
+        box-shadow: inset 2px 0 0 {css_rgba(skin.accent, 1.0)};
+    }}
+    .cp-title  {{ color: {css_rgba(skin.text, 1.0)}; font-size: 15px; font-weight: 700; }}
+    .cp-hint   {{ color: {css_rgba(skin.text_dim, 0.8)}; font-size: 11px; }}
+    .cp-label  {{ color: {css_rgba(skin.text, 1.0)}; font-size: 14px; font-weight: 600; }}
+    .cp-sub    {{ color: {css_rgba(skin.text_dim, 1.0)}; font-size: 11px; }}
+    .cp-index  {{ color: {css_rgba(skin.accent, 1.0)}; font-size: 12px; font-weight: 700; }}
+    window.copilot-menu row:selected .cp-label {{ color: #FFFFFF; }}
+    """.encode()
+
     provider = Gtk.CssProvider()
     provider.load_from_data(css)
     Gtk.StyleContext.add_provider_for_screen(
@@ -1145,6 +2692,7 @@ def primary_action(cfg: dict) -> dict | None:
 
 
 def main(argv: list[str]) -> int:
+    ensure_user_config()        # every user starts from the shipped defaults
     cfg = load_config()
     general = cfg["general"]
     sound = Sound(bool(general.get("sounds", True)), general.get("volume", 0.7))
@@ -1155,6 +2703,12 @@ def main(argv: list[str]) -> int:
 
     if mode in ("menu", "toggle", "auto"):
         pass
+    elif mode in ("ensure-shortcut", "setup"):
+        ensure_user_config()
+        return 0 if ensure_shortcut() else 1
+    elif mode in ("configure", "config", "settings"):
+        launch_resolved({"command": "@configure"}, sound)
+        return 0
     elif mode in ("test-sounds",):
         for cue in ("menu-open", "toggle-show", "toggle-hide", "launch", "menu-dismiss", "error"):
             print(f"  {cue}")

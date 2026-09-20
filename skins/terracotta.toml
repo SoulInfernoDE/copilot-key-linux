@@ -1,0 +1,24 @@
+# Terracotta - the look copilot-key ships with.
+#
+# Copy this file to ~/.config/copilot-key/skins/<name>.toml and edit it; the
+# menu picks it up on the next press. Every key is optional, anything you
+# leave out keeps the built-in value. See docs/skins.md.
+
+name = "Terracotta"
+author = "copilot-key"
+
+# flat   : filled buttons with a hairline outline
+# glass  : lit 3D spheres with a specular highlight
+# mint   : flat with a soft gradient and a solid border
+style = "flat"
+
+# circle | rounded (a rounded square)
+shape = "circle"
+
+[colors]
+backdrop = "#0B0A09"    # the dimmed desktop behind the wheel
+button = "#1C1A18"      # an unselected button
+edge = "#FFFFFF1F"      # its outline - the last two digits are the alpha
+accent = "#D97757"      # selection, badges, the centre button
+text = "#F2EFEB"
+text_dim = "#A39C94"
