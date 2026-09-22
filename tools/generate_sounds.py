@@ -36,6 +36,16 @@ NOTE = {
     "D5": 587.33, "E5": 659.25, "Fs5": 739.99, "A5": 880.00, "D6": 1174.66,
 }
 
+# The pure major third above D5. Equal temperament puts it 14 cents sharp,
+# which is inaudible in a melody but not when two bells overlap: they ring
+# in whole-number ratios, and 5:4 is the one this interval wants.
+FS5_PURE = NOTE["D5"] * 5 / 4
+
+# The pure fifths around D5, for menu-open: tempered they sit 2 cents flat,
+# enough for a partial that should coincide to beat instead.
+A4_PURE = NOTE["D5"] * 3 / 4
+A5_PURE = NOTE["D5"] * 3 / 2
+
 
 def bell(freq: float, dur: float, *, decay: float = 6.0, attack: float = 0.008,
          bend: float = 0.0, harmonics=((1.0, 1.0), (2.0, 0.18), (3.01, 0.07))) -> np.ndarray:
@@ -103,11 +113,17 @@ def write_wav(path: Path, stereo: np.ndarray) -> None:
 # --- the cues ---------------------------------------------------------------
 
 def cue_menu_open() -> np.ndarray:
-    """Two rising notes: something is unfolding, waiting for your choice."""
+    """Two rising notes: something is unfolding, waiting for your choice.
+
+    Pure fifths and no inharmonic partial. With the default bell, D5's third
+    partial (3.01 x) landed 7.9 Hz from A5's second and the two beat - a slow
+    wobble that made the chord sound slightly out of tune.
+    """
+    soft = ((1.0, 1.0), (2.0, 0.18))
     buf = np.zeros(int(SR * 0.55))
-    place(buf, bell(NOTE["A4"], 0.45, decay=7.0), 0.000, 0.85)
-    place(buf, bell(NOTE["D5"], 0.45, decay=6.0), 0.075, 0.95)
-    place(buf, bell(NOTE["A5"], 0.35, decay=9.0), 0.085, 0.25)
+    place(buf, bell(A4_PURE, 0.45, decay=7.0, harmonics=soft), 0.000, 0.85)
+    place(buf, bell(NOTE["D5"], 0.45, decay=6.0, harmonics=soft), 0.075, 0.95)
+    place(buf, bell(A5_PURE, 0.35, decay=9.0, harmonics=soft), 0.085, 0.25)
     return buf
 
 
@@ -130,10 +146,18 @@ def cue_launch() -> np.ndarray:
 
 
 def cue_toggle_show() -> np.ndarray:
-    """Short bright blip with an upward glide: the window comes forward."""
-    buf = np.zeros(int(SR * 0.30))
-    place(buf, bell(NOTE["Fs5"], 0.22, decay=13.0, attack=0.004, bend=0.035), 0.0, 1.0)
-    place(buf, bell(NOTE["D6"], 0.14, decay=18.0, attack=0.003), 0.006, 0.18)
+    """The window comes forward: D5 stepping up a pure major third.
+
+    The mirror of toggle-hide, brighter by a touch more octave. The first
+    version bent F#5 upwards under a D6: the note drifted by half a semitone
+    and the interval between the two slid past the point where it rings true,
+    so the whole cue sounded slightly out of tune. Steps, not glides; a pure
+    third rather than the tempered one; no inharmonic partial to beat.
+    """
+    bright = ((1.0, 1.0), (2.0, 0.16))
+    buf = np.zeros(int(SR * 0.36))
+    place(buf, bell(NOTE["D5"], 0.11, decay=20.0, attack=0.004, harmonics=bright), 0.000, 0.55)
+    place(buf, bell(FS5_PURE, 0.28, decay=11.0, attack=0.005, harmonics=bright), 0.042, 1.00)
     return buf
 
 

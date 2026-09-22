@@ -267,7 +267,7 @@ demands attention:
 | `menu-open` | the menu opens | two rising notes, questioning |
 | `menu-dismiss` | dismissed with Esc | the same falling and damped |
 | `launch` | an action starts | rising arpeggio, affirmative |
-| `toggle-show` | window comes forward | bright blip with an upward glide |
+| `toggle-show` | window comes forward | two bright notes rising a pure third |
 | `toggle-hide` | window is minimised | its counterpart: two soft notes falling a third |
 | `error` | action not available | low two-tone, deliberately not harsh |
 | `drag-lift` | a button is picked up | short upward pluck |
