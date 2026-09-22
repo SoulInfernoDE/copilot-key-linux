@@ -270,7 +270,7 @@ Attack, damit nichts klickt oder aufdringlich wirkt:
 | `menu-dismiss` | Menü mit Esc geschlossen | dasselbe abwärts, gedämpft |
 | `launch` | Aktion wird gestartet | aufsteigendes Arpeggio, bestätigend |
 | `toggle-show` | Fenster kommt nach vorne | heller Blip mit Aufwärts-Glide |
-| `toggle-hide` | Fenster wird minimiert | derselbe Blip abwärts |
+| `toggle-hide` | Fenster wird minimiert | das Gegenstück: zwei weiche Töne, eine Terz abwärts |
 | `error` | Aktion nicht ausführbar | tiefer Doppelton, bewusst nicht schrill |
 | `drag-lift` | ein Button wird angehoben | kurzer Zupfer aufwärts |
 | `drag-drop` | er wird abgelegt | ein Plopp, sofort gedämpft |

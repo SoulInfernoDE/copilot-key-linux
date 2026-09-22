@@ -95,6 +95,7 @@ STRINGS = {
         "hint_icon": "Type to search  \u00b7  Enter takes it  \u00b7  the button itself "
                      "brings its original icon back  \u00b7  Esc cancels",
         "use_original_icon": "use the original icon",
+        "icon_original_hint": "the icon installed with the application",
         "icon_builtin": "drawn symbol",
         "icon_from_app": "icon of this application",
         "icon_window": "Window",
@@ -234,6 +235,7 @@ STRINGS = {
         "hint_icon": "Tippen zum Suchen  \u00b7  Enter \u00fcbernimmt  \u00b7  der Button "
                      "selbst holt sein Original-Icon zur\u00fcck  \u00b7  Esc bricht ab",
         "use_original_icon": "Original-Icon verwenden",
+        "icon_original_hint": "das Icon, das mit der Anwendung installiert wurde",
         "icon_builtin": "gezeichnetes Symbol",
         "icon_from_app": "Icon dieser Anwendung",
         "icon_window": "Fenster",
@@ -679,9 +681,11 @@ class App:
     """One installed application, reduced to what an action needs."""
 
     __slots__ = ("name", "comment", "command", "window_class", "icon_name",
-                 "icon", "terminal", "haystack")
+                 "icon", "terminal", "haystack", "desktop_id")
 
-    def __init__(self, name, comment, command, window_class, icon_name, icon, terminal):
+    def __init__(self, name, comment, command, window_class, icon_name, icon, terminal,
+                 desktop_id=""):
+        self.desktop_id = desktop_id
         self.name = name
         self.comment = comment
         self.command = command
@@ -800,6 +804,7 @@ def read_apps() -> list[App]:
                 icon_name=data.get("Icon", ""),
                 icon=guess_icon(data, name, command, terminal),
                 terminal=terminal,
+                desktop_id=path.name,
             ))
     apps.sort(key=lambda app: app.name.lower())
     return apps
@@ -818,38 +823,177 @@ def installed_apps() -> list:
     return _apps_cache
 
 
-def resolve_app_icon(command: str) -> str:
-    """The icon name of the desktop entry a command belongs to.
+# Launchers that start other programs: their name says nothing about which
+# application is behind a command, so they never count as a match.
+GENERIC_LAUNCHERS = {"flatpak", "snap", "env", "sh", "bash", "python3", "python",
+                     "gtk-launch", "xdg-open", "exo-open", "gio", "sudo", "pkexec"}
 
-    Entries written by hand carry no icon of their own, so the launcher looks
-    for the application the command actually starts and borrows its icon.
+# What the icon theme calls the stand-ins, should a placeholder's own program
+# not be found - every freedesktop theme carries these.
+FALLBACK_ICONS = {
+    "terminal": ("utilities-terminal", "terminal"),
+    "browser": ("web-browser", "internet-web-browser"),
+    "editor": ("accessories-text-editor", "text-editor"),
+    "configure": ("preferences-desktop-keyboard-shortcuts", "preferences-desktop"),
+}
+
+
+def program_names(program: str) -> list[str]:
+    """The names a program may go by in a desktop file's Exec line.
+
+    x-terminal-emulator is an alternatives link to gnome-terminal.wrapper, so
+    both the name and the real target count, minus the wrapper suffix.
+    """
+    names = []
+    for candidate in (program, os.path.realpath(shutil.which(program) or program)):
+        name = Path(candidate).name
+        if name.endswith(".wrapper"):
+            name = name[:-len(".wrapper")]
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def app_for_program(program: str) -> "App | None":
+    names = [n for n in program_names(program) if n not in GENERIC_LAUNCHERS]
+    for app in installed_apps():
+        try:
+            head = Path(shlex.split(app.command)[0]).name
+        except (ValueError, IndexError):
+            continue
+        if head in names and app.icon_name:
+            return app
+    return None
+
+
+def app_for_desktop_id(desktop_id: str) -> "App | None":
+    desktop_id = desktop_id.strip()
+    if not desktop_id:
+        return None
+    for app in installed_apps():
+        if app.desktop_id == desktop_id and app.icon_name:
+            return app
+    return None
+
+
+def default_handler(kind: str) -> str:
+    """The desktop file of the user's default browser or text editor."""
+    if kind == "browser":
+        return run_out(["xdg-settings", "get", "default-web-browser"]).strip()
+    if kind == "editor":
+        return run_out(["xdg-mime", "query", "default", "text/plain"]).strip()
+    return ""
+
+
+def icon_available(name: str) -> bool:
+    """Whether a themed icon name (or an icon file) can actually be drawn."""
+    if not name:
+        return False
+    if name.startswith("/"):
+        return Path(name).is_file()
+    if Gtk is None:
+        return True          # nothing to ask - trust the desktop file
+    try:
+        return bool(Gtk.IconTheme.get_default().has_icon(name))
+    except Exception:
+        return True
+
+
+def icon_candidates(command: str, window_class: str = ""):
+    """Icon names worth trying for an action, the most specific first.
+
+    Placeholders are followed to the program they really start - Claude's own
+    desktop app, the terminal emulator, the default browser, the editor - so
+    "the original icon" is the one that program installed.
     """
     command = str(command or "").strip()
-    if not command or command in ("@claude-desktop", "@configure", "@edit-config"):
-        return ""
-    if command in _command_icons:
-        return _command_icons[command]
+    window_class = str(window_class or "").strip().lower()
+    fallback = ()
 
-    wanted = command
-    if wanted.startswith("@terminal "):
-        wanted = wanted[len("@terminal "):].strip()
-    found = ""
-    if not wanted.startswith("@"):
+    if command == "@claude-desktop":
+        program = chosen_desktop_app()
+        app = app_for_program(program) if program else None
+        if app:
+            yield app.icon_name
+        # Without a desktop app the action opens claude.ai in the browser.
+        app = app_for_desktop_id(default_handler("browser"))
+        if not program and app:
+            yield app.icon_name
+    elif command.startswith("@terminal "):
+        inner = command[len("@terminal "):].strip()
         try:
-            head = Path(shlex.split(wanted)[0]).name
+            head = shlex.split(inner)[0]
         except (ValueError, IndexError):
             head = ""
-        if head:
-            for app in installed_apps():
-                try:
-                    candidate = Path(shlex.split(app.command)[0]).name
-                except (ValueError, IndexError):
-                    continue
-                if candidate == head and app.icon_name:
-                    found = app.icon_name
-                    break
-    _command_icons[command] = found
+        app = app_for_program(head) if head else None
+        if app:                  # "@terminal htop" has an icon of its own
+            yield app.icon_name
+        terminal = chosen_terminal()
+        app = app_for_program(terminal[0]) if terminal else None
+        if app:
+            yield app.icon_name
+        fallback = FALLBACK_ICONS["terminal"]
+    elif command.startswith("@browser "):
+        app = app_for_desktop_id(default_handler("browser"))
+        if app:
+            yield app.icon_name
+        fallback = FALLBACK_ICONS["browser"]
+    elif command == "@configure":
+        app = app_for_desktop_id("copilot-key-config.desktop")
+        if app:
+            yield app.icon_name
+        fallback = FALLBACK_ICONS["configure"]
+    elif command == "@edit-config":
+        app = app_for_desktop_id(default_handler("editor"))
+        if app:
+            yield app.icon_name
+        fallback = FALLBACK_ICONS["editor"]
+    elif command:
+        # Exactly the Exec line of a desktop file - how the pickers store it,
+        # and the only reliable answer for "flatpak run ..." commands.
+        for app in installed_apps():
+            if app.command == command and app.icon_name:
+                yield app.icon_name
+                break
+        try:
+            head = shlex.split(command)[0]
+        except (ValueError, IndexError):
+            head = ""
+        app = app_for_program(head) if head else None
+        if app:
+            yield app.icon_name
+
+    if window_class:
+        # The window the toggle looks for names its application as well.
+        for app in installed_apps():
+            if app.icon_name and window_class in app.window_class.lower():
+                yield app.icon_name
+                break
+    yield from fallback
+
+
+def resolve_app_icon(command: str, window_class: str = "") -> str:
+    """The icon the application behind an action installed, "" if none.
+
+    Hand-written entries and the @placeholders carry no icon of their own, so
+    the launcher follows them to the program they start and borrows that
+    program's icon. Cached per command, since it may ask xdg-settings.
+    """
+    key = (str(command or "").strip(), str(window_class or "").strip())
+    if key in _command_icons:
+        return _command_icons[key]
+    found = ""
+    for name in icon_candidates(*key):
+        if icon_available(name):
+            found = name
+            break
+    _command_icons[key] = found
     return found
+
+
+def original_icon(action: dict) -> str:
+    return resolve_app_icon(str(action.get("command", "")),
+                            str(action.get("window_class", "")))
 
 
 def themed_icon_for(action: dict, use_app_icons: bool, fallback: str = "") -> str:
@@ -1062,14 +1206,31 @@ TERMINALS = [
 DESKTOP_CANDIDATES = ["claude-desktop", "claude-desktop-app", "Claude", "claude-desktop-bin"]
 
 
+def chosen_terminal() -> tuple[str, list[str]] | None:
+    """The terminal emulator @terminal opens: the first one installed."""
+    for term, flag in TERMINALS:
+        if have(term):
+            return term, flag
+    return None
+
+
+def chosen_desktop_app() -> str:
+    """The Claude desktop program @claude-desktop starts, "" if there is none."""
+    for candidate in DESKTOP_CANDIDATES:
+        if have(candidate):
+            return candidate
+    return ""
+
+
 def resolve(command: str) -> list[str] | None:
     """Translate an @placeholder command into an argv list."""
     if command.startswith("@terminal "):
         inner = command[len("@terminal "):].strip()
-        for term, flag in TERMINALS:
-            if have(term):
-                # Keep the terminal open after the program exits.
-                return [term, *flag, "bash", "-lc", f"{inner}; exec bash"]
+        terminal = chosen_terminal()
+        if terminal is not None:
+            term, flag = terminal
+            # Keep the terminal open after the program exits.
+            return [term, *flag, "bash", "-lc", f"{inner}; exec bash"]
         warn(tr("warn_no_terminal"))
         return None
 
@@ -1081,9 +1242,9 @@ def resolve(command: str) -> list[str] | None:
         return None
 
     if command == "@claude-desktop":
-        for candidate in DESKTOP_CANDIDATES:
-            if have(candidate):
-                return [candidate]
+        program = chosen_desktop_app()
+        if program:
+            return [program]
         # Fall back to the web app rather than doing nothing at all.
         if have("xdg-open"):
             warn(tr("warn_no_desktop_app"))
@@ -1892,6 +2053,7 @@ class RadialMenu:
         self.frost: dict = {}
         self.hits_at = 0.0
         self.origin = (0, 0)
+        self.original = ""              # the original icon of the slot being edited
 
     # -- time ---------------------------------------------------------------
 
@@ -2049,7 +2211,7 @@ class RadialMenu:
         if self.use_app_icons:
             for action in self.actions:
                 if not str(action.get("app_icon", "")).strip():
-                    self.resolved[id(action)] = resolve_app_icon(str(action.get("command", "")))
+                    self.resolved[id(action)] = original_icon(action)
             if self.area is not None:
                 self.area.queue_draw()
         return False
@@ -2243,7 +2405,7 @@ class RadialMenu:
             self.draw_badge(cr, x + radius * 0.74, y - radius * 0.74, number, skin.accent, alpha)
 
         label = str(action.get("label") or "")
-        if filling and self.search_mode == "icon":
+        if filling and self.search_mode == "icon" and self.original:
             label = tr("use_original_icon")
         elif empty and not label:
             label = tr("slot_empty")
@@ -2732,6 +2894,9 @@ class RadialMenu:
         self.search_slot = index
         self.search_mode = mode
         self.search_at = time.monotonic()
+        # Worked out once, up front: the icon search offers it as its first
+        # row, and the button only promises it when there is one to give.
+        self.original = original_icon(self.actions[index]) if mode == "icon" else ""
         self.search_text = ""
         self.search_index = 0
         if self.apps is None:
@@ -2747,6 +2912,7 @@ class RadialMenu:
             self.sound.play("menu-dismiss")
 
     def close_search(self) -> None:
+        self.original = ""
         self.search_slot = -1
         self.search_at = None
         self.search_text = ""
@@ -2756,7 +2922,14 @@ class RadialMenu:
     def refresh_hits(self) -> None:
         query = self.search_text.strip().lower()
         if self.search_mode == "icon":
-            self.search_hits = icon_choices(query, self.apps or [])[:self.MAX_HITS]
+            hits = icon_choices(query, self.apps or [])
+            label = tr("use_original_icon")
+            if self.original and (not query or query in label.lower()
+                                  or query in self.original.lower()):
+                action = self.actions[self.search_slot]
+                hits.insert(0, Choice(label, tr("icon_original_hint"),
+                                      icon_for(action), self.original))
+            self.search_hits = hits[:self.MAX_HITS]
         else:
             scored = []
             for app in self.apps or []:
@@ -2802,11 +2975,14 @@ class RadialMenu:
         self.save()
 
     def use_original_icon(self) -> None:
-        """Back to the icon the application itself brings along."""
+        """Back to the icon the application itself brought along.
+
+        Worked out from the command every time: app_icon may hold whatever
+        the icon search put there since, which is exactly what this undoes.
+        """
         index = self.search_slot
         action = self.actions[index]
-        name = (str(action.get("app_icon", "")).strip()
-                or resolve_app_icon(str(action.get("command", ""))))
+        name = self.original or original_icon(action)
         self.close_search()
         if not name:
             self.sound.play("error")

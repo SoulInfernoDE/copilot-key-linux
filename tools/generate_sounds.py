@@ -138,9 +138,18 @@ def cue_toggle_show() -> np.ndarray:
 
 
 def cue_toggle_hide() -> np.ndarray:
-    """Same gesture, downward: the window steps back."""
-    buf = np.zeros(int(SR * 0.32))
-    place(buf, bell(NOTE["D5"], 0.26, decay=11.0, attack=0.005, bend=-0.045), 0.0, 0.9)
+    """The counterpart of toggle-show: from F#5 down to D5, a major third.
+
+    Two clean steps instead of a glide. The first version bent a single bell
+    downwards, and a decaying note that slowly goes flat - it sagged by two
+    thirds of a semitone - sounds out of tune rather than calm. The slightly
+    inharmonic third partial is left out for the same reason: it beat against
+    the fundamental.
+    """
+    soft = ((1.0, 1.0), (2.0, 0.10))
+    buf = np.zeros(int(SR * 0.38))
+    place(buf, bell(NOTE["Fs5"], 0.12, decay=20.0, attack=0.005, harmonics=soft), 0.000, 0.55)
+    place(buf, bell(NOTE["D5"], 0.30, decay=11.0, attack=0.007, harmonics=soft), 0.045, 0.90)
     return buf
 
 
