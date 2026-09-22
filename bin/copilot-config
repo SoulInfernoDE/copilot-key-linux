@@ -16,6 +16,7 @@ Usage:  copilot-config [--print-template]
 
 from __future__ import annotations
 
+import filecmp
 import importlib.machinery
 import importlib.util
 import os
@@ -73,6 +74,30 @@ button_icon_rgba = CK.button_icon_rgba
 rounded_rect = CK.rounded_rect_path
 
 SKIN_GUIDE_URL = "https://github.com/SoulInfernoDE/copilot-key-linux/blob/main/docs/skins.md"
+SOUND_GUIDE_URL = ("https://github.com/SoulInfernoDE/copilot-key-linux/blob/main/"
+                   "docs/sound-themes.md")
+
+
+def adopt_sound_file(source: Path) -> str:
+    """Copy a picked sound into the user's own folder; return its name there.
+
+    The configuration then points at a copy that stays put, rather than at a
+    file in Downloads that the next tidy-up takes away.
+    """
+    folder = CK.user_sound_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    source = source.resolve()
+    if source.parent == folder.resolve():
+        return source.name                     # already there
+    # Same name, same bytes: the copy from last time - reuse it. Only a
+    # different sound under a taken name gets a numbered name of its own.
+    target, n = folder / source.name, 2
+    while target.exists() and not filecmp.cmp(target, source, shallow=False):
+        target = folder / f"{source.stem}-{n}{source.suffix}"
+        n += 1
+    if not target.exists():
+        shutil.copy2(source, target)
+    return target.name
 
 
 
@@ -340,6 +365,7 @@ class Editor:
     def __init__(self) -> None:
         cfg = CK.load_config()
         self.general = dict(cfg["general"])
+        self.sounds = dict(cfg.get("sounds", {}))
         self.actions = [dict(action) for action in cfg["actions"]]
         self.selected = 0
         self.dirty = False
@@ -395,6 +421,7 @@ class Editor:
         notebook.set_border_width(10)
         notebook.append_page(self.build_menu_page(), Gtk.Label(label=tr("cfg_tab_menu")))
         notebook.append_page(self.build_skin_page(), Gtk.Label(label=tr("cfg_tab_skin")))
+        notebook.append_page(self.build_sound_page(), Gtk.Label(label=tr("cfg_tab_sounds")))
         notebook.append_page(self.build_behaviour_page(), Gtk.Label(label=tr("cfg_tab_behaviour")))
         outer.pack_start(notebook, True, True, 0)
 
@@ -596,21 +623,6 @@ class Editor:
         grid.set_margin_top(6)
         row = 0
 
-        sounds = Gtk.CheckButton(label=tr("cfg_gen_sounds"))
-        sounds.set_active(bool(self.general.get("sounds", True)))
-        sounds.connect("toggled", self.on_general_toggle, "sounds")
-        grid.attach(sounds, 1, row, 1, 1)
-        row += 1
-
-        grid.attach(Gtk.Label(label=tr("cfg_gen_volume"), xalign=1.0), 0, row, 1, 1)
-        volume = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.05)
-        volume.set_value(float(self.general.get("volume", 0.7)))
-        volume.set_digits(2)
-        volume.set_hexpand(True)
-        volume.connect("value-changed", self.on_general_scale, "volume")
-        grid.attach(volume, 1, row, 1, 1)
-        row += 1
-
         grid.attach(Gtk.Label(label=tr("cfg_gen_double"), xalign=1.0), 0, row, 1, 1)
         double = Gtk.SpinButton.new_with_range(150, 2000, 50)
         double.set_value(int(self.general.get("double_press_ms", 450)))
@@ -766,6 +778,9 @@ class Editor:
         self.general["menu_skin"] = row.skin_id
         self.mark_dirty()
         self.queue_preview()
+        if hasattr(self, "theme_list"):
+            self.fill_theme_list()        # "automatic" now means another theme
+            self.refresh_cues()
 
     def on_skin_guide(self, *_args) -> None:
         """The format is documented in the repository - open it either way."""
@@ -792,6 +807,253 @@ class Editor:
                              stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError as exc:
             self.notify(tr("cfg_save_failed", error=exc))
+
+    # -- the sounds tab -----------------------------------------------------
+
+    def build_sound_page(self) -> "Gtk.Widget":
+        """Theme on the left, every single cue on the right.
+
+        A theme sets all cues at once; a file of your own replaces just one.
+        What each row says it plays is what the key will play - it comes from
+        the same resolver the launcher uses.
+        """
+        self.loading = True
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        page.set_border_width(12)
+
+        heading = Gtk.Label(label=tr("cfg_tab_sounds"), xalign=0.0)
+        heading.get_style_context().add_class("cp-h1")
+        page.pack_start(heading, False, False, 0)
+        hint = Gtk.Label(label=tr("snd_hint"), xalign=0.0)
+        hint.get_style_context().add_class("cp-dim")
+        hint.set_line_wrap(True)
+        page.pack_start(hint, False, False, 0)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        enabled = Gtk.CheckButton(label=tr("cfg_gen_sounds"))
+        enabled.set_active(bool(self.general.get("sounds", True)))
+        enabled.connect("toggled", self.on_general_toggle, "sounds")
+        top.pack_start(enabled, False, False, 0)
+        top.pack_start(Gtk.Label(label=tr("cfg_gen_volume")), False, False, 0)
+        volume = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.05)
+        volume.set_value(float(self.general.get("volume", 0.7)))
+        volume.set_digits(2)
+        volume.set_hexpand(True)
+        volume.connect("value-changed", self.on_general_scale, "volume")
+        top.pack_start(volume, True, True, 0)
+        page.pack_start(top, False, False, 0)
+
+        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        page.pack_start(columns, True, True, 0)
+
+        # --- left: the themes ------------------------------------------------
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left.set_size_request(290, -1)
+        caption = Gtk.Label(label=tr("snd_theme_heading"), xalign=0.0)
+        caption.get_style_context().add_class("cp-h1")
+        left.pack_start(caption, False, False, 0)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        self.theme_list = Gtk.ListBox()
+        self.theme_list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+        self.theme_list.connect("row-selected", self.on_theme_selected)
+        scroller.add(self.theme_list)
+        left.pack_start(scroller, True, True, 0)
+        columns.pack_start(left, False, False, 0)
+
+        # --- right: every cue ----------------------------------------------------
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        caption = Gtk.Label(label=tr("snd_cues_heading"), xalign=0.0)
+        caption.get_style_context().add_class("cp-h1")
+        right.pack_start(caption, False, False, 0)
+        grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+        self.cue_rows = {}
+        for row, cue in enumerate(CK.CUE_NAMES):
+            play = Gtk.Button.new_from_icon_name("media-playback-start-symbolic",
+                                                 Gtk.IconSize.BUTTON)
+            play.set_tooltip_text(tr("snd_play"))
+            play.connect("clicked", self.on_cue_play, cue)
+            grid.attach(play, 0, row, 1, 1)
+
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            name = Gtk.Label(label=tr(f"cue_{cue}"), xalign=0.0)
+            text.pack_start(name, False, False, 0)
+            source = Gtk.Label(label="", xalign=0.0)
+            source.get_style_context().add_class("cp-dim")
+            source.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            text.pack_start(source, False, False, 0)
+            text.set_hexpand(True)
+            grid.attach(text, 1, row, 1, 1)
+
+            choose = Gtk.Button(label=tr("snd_choose"))
+            choose.connect("clicked", self.on_cue_choose, cue)
+            grid.attach(choose, 2, row, 1, 1)
+            mute = Gtk.ToggleButton()
+            mute.add(Gtk.Image.new_from_icon_name("audio-volume-muted-symbolic",
+                                                  Gtk.IconSize.BUTTON))
+            mute.set_tooltip_text(tr("snd_mute"))
+            mute.connect("toggled", self.on_cue_mute, cue)
+            grid.attach(mute, 3, row, 1, 1)
+            reset = Gtk.Button.new_from_icon_name("edit-undo-symbolic", Gtk.IconSize.BUTTON)
+            reset.set_tooltip_text(tr("snd_reset"))
+            reset.connect("clicked", self.on_cue_reset, cue)
+            grid.attach(reset, 4, row, 1, 1)
+            self.cue_rows[cue] = {"source": source, "mute": mute, "reset": reset}
+        right.pack_start(grid, False, False, 0)
+        columns.pack_start(right, True, True, 0)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        guide = Gtk.Button(label=tr("snd_guide"))
+        guide.connect("clicked", self.on_sound_guide)
+        buttons.pack_start(guide, False, False, 0)
+        folder = Gtk.Button(label=tr("snd_folder"))
+        folder.connect("clicked", self.on_sound_folder)
+        buttons.pack_start(folder, False, False, 0)
+        page.pack_start(buttons, False, False, 0)
+
+        self.fill_theme_list()
+        self.refresh_cues()
+        self.loading = False
+        return page
+
+    def resolver(self) -> "CK.CueResolver":
+        """The launcher's own answer for the state being edited right now."""
+        return CK.CueResolver({"general": self.general, "sounds": self.sounds}, self.skin)
+
+    def fill_theme_list(self) -> None:
+        was_loading, self.loading = self.loading, True
+        for child in self.theme_list.get_children():
+            self.theme_list.remove(child)
+        themes = CK.available_sound_themes()
+        current = str(self.general.get("sound_theme", "auto") or "auto")
+        auto_theme = themes.get(self.skin.sound_theme or "default", themes["default"])
+        entries = [("auto", tr("snd_theme_auto"),
+                    tr("snd_theme_auto_hint", skin=self.skin.name, theme=auto_theme.name))]
+        for theme_id, theme in themes.items():
+            detail = tr("snd_theme_count", count=theme.cue_count())
+            if theme.description:
+                detail = f"{theme.description} \u00b7 {detail}"
+            entries.append((theme_id, theme.name, detail))
+        chosen = None
+        for theme_id, title, detail in entries:
+            row = Gtk.ListBoxRow()
+            row.theme_id = theme_id          # type: ignore[attr-defined]
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            box.set_border_width(7)
+            box.pack_start(Gtk.Label(label=title, xalign=0.0), False, False, 0)
+            sub = Gtk.Label(label=detail, xalign=0.0)
+            sub.get_style_context().add_class("cp-dim")
+            sub.set_line_wrap(True)
+            box.pack_start(sub, False, False, 0)
+            row.add(box)
+            self.theme_list.add(row)
+            if theme_id == current:
+                chosen = row
+        self.theme_list.show_all()
+        if chosen is None:           # a theme that is gone: show "automatic"
+            chosen = self.theme_list.get_row_at_index(0)
+        self.theme_list.select_row(chosen)
+        self.loading = was_loading
+
+    def refresh_cues(self) -> None:
+        was_loading, self.loading = self.loading, True
+        resolver = self.resolver()
+        names = {tid: theme.name for tid, theme in CK.available_sound_themes().items()}
+        for cue, widgets in self.cue_rows.items():
+            _path, source, _gain = resolver.resolve(cue)
+            if source == "custom":
+                text = tr("snd_src_custom", name=Path(self.sounds.get(cue, "")).name)
+            elif source == "muted":
+                text = tr("snd_src_muted")
+            elif source == "missing":
+                text = tr("snd_src_missing")
+            else:
+                text = tr("snd_src_theme", theme=names.get(source, source))
+            widgets["source"].set_text(text)
+            widgets["mute"].set_active(source == "muted")
+            widgets["reset"].set_sensitive(cue in self.sounds)
+        self.loading = was_loading
+
+    def on_theme_selected(self, _listbox, row) -> None:
+        if row is None or self.loading:
+            return
+        self.general["sound_theme"] = row.theme_id
+        self.mark_dirty()
+        self.refresh_cues()
+        self.preview_cue("menu-open")     # a taste of the theme just picked
+
+    def preview_cue(self, cue: str) -> None:
+        path, _source, gain = self.resolver().resolve(cue)
+        if path is not None:
+            CK.Sound(True, float(self.general.get("volume", 0.7))).play_file(path, gain)
+
+    def on_cue_play(self, _button, cue: str) -> None:
+        self.preview_cue(cue)
+
+    def on_cue_choose(self, _button, cue: str) -> None:
+        dialog = Gtk.FileChooserDialog(
+            title=tr("snd_choose_title", cue=tr(f"cue_{cue}")), transient_for=self.win,
+            action=Gtk.FileChooserAction.OPEN)
+        dialog.add_button(tr("cfg_cancel"), Gtk.ResponseType.CANCEL)
+        dialog.add_button(tr("cfg_use"), Gtk.ResponseType.OK)
+        audio = Gtk.FileFilter()
+        audio.set_name(tr("snd_filter"))
+        for ext in CK.AUDIO_EXTENSIONS:
+            audio.add_pattern(f"*{ext}")
+            audio.add_pattern(f"*{ext.upper()}")
+        dialog.add_filter(audio)
+        # Start where people keep sounds - the music folder, else home.
+        start = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_MUSIC)
+        dialog.set_current_folder(start if start and Path(start).is_dir() else str(Path.home()))
+        response = dialog.run()
+        chosen = dialog.get_filename()
+        dialog.destroy()
+        if response != Gtk.ResponseType.OK or not chosen:
+            return
+        try:
+            name = adopt_sound_file(Path(chosen))
+        except OSError as exc:
+            self.notify(tr("snd_copy_failed", error=exc))
+            return
+        self.sounds[cue] = name
+        self.mark_dirty()
+        self.refresh_cues()
+        self.preview_cue(cue)
+
+    def on_cue_mute(self, button, cue: str) -> None:
+        if self.loading:
+            return
+        if button.get_active():
+            self.sounds[cue] = "none"
+        elif self.sounds.get(cue, "").strip().lower() in CK.MUTED_VALUES:
+            del self.sounds[cue]
+        self.mark_dirty()
+        self.refresh_cues()
+
+    def on_cue_reset(self, _button, cue: str) -> None:
+        if self.sounds.pop(cue, None) is not None:
+            self.mark_dirty()
+            self.refresh_cues()
+            self.preview_cue(cue)
+
+    def on_sound_guide(self, *_args) -> None:
+        target = SOUND_GUIDE_URL
+        for base in [CK.PROJECT_DIR, *CK.data_dirs()]:
+            candidate = Path(base) / "docs" / "sound-themes.md"
+            if candidate.is_file():
+                target = str(candidate)
+                break
+        self.open_externally(target)
+
+    def on_sound_folder(self, *_args) -> None:
+        folder = CK.user_sound_dir()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.notify(tr("cfg_save_failed", error=exc))
+            return
+        self.open_externally(str(folder))
 
     # -- the entry list -----------------------------------------------------
 
@@ -1233,7 +1495,7 @@ class Editor:
 
     def collect(self) -> dict:
         """The edited state as a configuration, ids and primary normalised."""
-        return CK.normalise_config(self.general, self.actions)
+        return CK.normalise_config(self.general, self.actions, self.sounds)
 
     def on_save(self, *_args) -> bool:
         cfg = self.collect()
@@ -1244,6 +1506,7 @@ class Editor:
             return False
         self.actions = cfg["actions"]      # show what was actually written
         self.general = cfg["general"]
+        self.sounds = cfg["sounds"]
         self.dirty = False
         self.save_button.set_sensitive(False)
         self.rebuild_list()

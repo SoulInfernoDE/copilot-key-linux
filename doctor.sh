@@ -36,7 +36,13 @@ if [ -d "$DATA_DIR/sounds" ]; then
     count=$(find "$DATA_DIR/sounds" -maxdepth 1 -type f \( -name '*.ogg' -o -name '*.wav' \) | wc -l)
     if [ "$count" -gt 0 ]; then
         pass "$(t doc_sounds_found "$count" "$DATA_DIR/sounds")"
-        ls -1 "$DATA_DIR/sounds" | sed 's/^/       /'
+        ls -1 "$DATA_DIR/sounds" | grep -v '/$' | sed 's/^/       /'
+        for theme in "$DATA_DIR"/sounds/*/ "${XDG_CONFIG_HOME:-$HOME/.config}"/copilot-key/sounds/*/; do
+            [ -d "$theme" ] || continue
+            cues=$(find "$theme" -maxdepth 1 -type f \( -name '*.ogg' -o -name '*.oga' -o -name '*.wav' \
+                   -o -name '*.flac' -o -name '*.mp3' \) | wc -l)
+            pass "$(t doc_sound_theme "$(basename "$theme")" "$cues" "$theme")"
+        done
     else
         fail "$(t doc_sounds_empty "$DATA_DIR/sounds")"
     fi

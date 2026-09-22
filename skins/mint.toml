@@ -3,6 +3,10 @@
 
 name = "Mint"
 author = "copilot-key"
+
+# The sound theme this skin brings along (soft wooden mallets to go with the calm green).
+# Used while sound_theme = "auto"; see docs/sound-themes.md.
+sound_theme = "felt"
 style = "mint"
 shape = "rounded"
 
