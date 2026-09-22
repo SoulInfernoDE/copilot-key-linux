@@ -268,7 +268,7 @@ demands attention:
 | `menu-dismiss` | dismissed with Esc | the same falling and damped |
 | `launch` | an action starts | rising arpeggio, affirmative |
 | `toggle-show` | window comes forward | bright blip with an upward glide |
-| `toggle-hide` | window is minimised | the same blip downwards |
+| `toggle-hide` | window is minimised | its counterpart: two soft notes falling a third |
 | `error` | action not available | low two-tone, deliberately not harsh |
 | `drag-lift` | a button is picked up | short upward pluck |
 | `drag-drop` | it settles again | a plop, damped at once |

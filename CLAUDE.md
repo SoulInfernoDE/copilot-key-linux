@@ -124,7 +124,14 @@ file for anyone who prefers it.
 
 `use_app_icons` in `[general]` puts the real icons on the buttons.
 `resolve_app_icon()` finds the desktop entry a command belongs to and borrows
-its icon, which is what makes the setting work for entries written by hand;
+its icon, which is what makes the setting work for entries written by hand.
+The `@placeholders` are followed to the program they really start -
+`@claude-desktop` to Claude's own desktop file, `@terminal` to the emulator
+`chosen_terminal()` picks (through the `x-terminal-emulator` alternatives
+link), `@browser` and `@edit-config` to the user's default handlers, and
+`@configure` to the editor's own entry - with a freedesktop stand-in such as
+`utilities-terminal` as the last resort. `flatpak run ...` commands match by
+their full Exec line only, since the launcher's own name says nothing;
 the result is cached per command, and the lookup runs from a timeout after the
 first frame so the wheel is never late. Entries created by either editor
 remember the icon as `app_icon` right away, so nothing has to be resolved for
@@ -249,8 +256,11 @@ Check both `LANG=en_US.UTF-8` and `LANG=de_DE.UTF-8` after touching any text.
 
 ## Sound design
 
-Six cues, one family: soft glass bells on a pentatonic scale over D, under
-0.9 s, peak −18 dBFS, gentle attack. `tools/generate_sounds.py` builds them
+Eight cues, one family: soft glass bells on a pentatonic scale over D, under
+0.9 s, peak −18 dBFS, gentle attack. Move between notes in steps, not glides:
+the first `toggle-hide` bent one bell downwards, and a decaying note that
+slowly goes flat - it sagged by two thirds of a semitone - sounds out of tune
+rather than calm. A short upward bend (`toggle-show`) gets away with it. `tools/generate_sounds.py` builds them
 with additive synthesis in numpy and encodes to Ogg via ffmpeg — no samples, no
 recordings, which is what keeps them CC0.
 

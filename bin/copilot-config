@@ -276,7 +276,7 @@ def draw_wheel_preview(cr, width, height, skin, actions, selected=-1,
         cr.save()
         cr.translate(x, y)
         themed = CK.themed_icon_for(action, app_icons,
-                                    CK.resolve_app_icon(action.get("command", "")))
+                                    CK.original_icon(action))
         if not (themed and CK.draw_app_icon(cr, themed, button * 1.05)):
             CK.draw_icon(cr, CK.icon_for(action), button * 0.92,
                          button_icon_rgba(skin, chosen, 1.0))
@@ -808,7 +808,7 @@ class Editor:
         icon = icon_area((lambda a: lambda: CK.icon_for(a))(action), 20,
                          get_themed=(lambda a: lambda: CK.themed_icon_for(
                              a, bool(self.general.get("use_app_icons", False)),
-                             CK.resolve_app_icon(a.get("command", ""))))(action))
+                             CK.original_icon(a)))(action))
         line.pack_start(icon, False, False, 0)
 
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
