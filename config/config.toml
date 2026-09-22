@@ -11,6 +11,11 @@ sounds = true
 # Cue volume, 0.0 to 1.0.
 volume = 0.7
 
+# Sound theme: "auto" takes the one the skin names, otherwise a directory
+# name from sounds/ - "default" (glass bells), "crystal", "felt", or your
+# own. docs/sound-themes.md explains how to make one.
+sound_theme = "auto"
+
 # Time window for the double press, in milliseconds.
 double_press_ms = 450
 
@@ -43,6 +48,17 @@ dim_opacity = 0.62
 
 # Theme of the editor window: "auto" follows the desktop, or "dark" / "light".
 editor_theme = "auto"
+
+
+# --- sounds -----------------------------------------------------------------
+# One file per cue, overruling the sound theme for just that cue. A bare file
+# name is looked up in ~/.config/copilot-key/sounds/, "~/..." and absolute
+# paths work as well, and "none" mutes that one cue. The editor's Sounds tab
+# fills this in - and copies the file there, so tidying Downloads breaks nothing.
+#
+# Cues: menu-open, menu-dismiss, launch, toggle-show, toggle-hide, error,
+#       drag-lift, drag-drop
+[sounds]
 
 
 # --- actions ----------------------------------------------------------------

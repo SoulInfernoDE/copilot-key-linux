@@ -287,8 +287,25 @@ included and reproduces them exactly:
 python3 tools/generate_sounds.py sounds
 ```
 
-To use your own: drop `.ogg` or `.wav` files with the same names into
-`~/.local/share/copilot-key/sounds`.
+### Sound themes
+
+Those glass bells are one of three themes:
+
+| Theme | Sound | Comes with the skin |
+|---|---|---|
+| `default` — Glass | soft glass bells | Terracotta |
+| `crystal` — Crystal | bright chimes an octave higher | Aurora 3D |
+| `felt` — Felt | soft wooden mallets, low and muted | Mint |
+
+`sound_theme = "auto"` — the default — plays whatever the skin brings along;
+naming a theme keeps it whichever skin you pick. The editor's **Sounds** tab
+lists the themes, plays every cue on request, and lets you replace a single
+one with a file of your own or mute it. Such a file is copied into
+`~/.config/copilot-key/sounds/`, so tidying up Downloads breaks nothing.
+
+A theme of your own is a folder of audio files — it need not be complete,
+whatever it leaves out comes from the theme it inherits from.
+**[docs/sound-themes.md](docs/sound-themes.md)** has the details.
 
 ---
 
@@ -316,13 +333,14 @@ bin/copilot-sound        cue playback (paplay / pw-play / ffplay / mpv / aplay)
 bin/copilot-config       graphical editor for the menu, with app search
 skins/                   the three shipped skins
 docs/skins.md            how to write your own skin
+docs/sound-themes.md     how to make your own sound theme
 lib/i18n.sh              string catalogue for the shell scripts
 config/config.toml       configuration template (English, printed by the editor)
 config/config.de.toml    configuration template (German, printed by the editor)
 config/keyd-copilot.conf keyd rule for the Copilot chord
 config/copilot-key-config.desktop  start menu entry for the editor
 config/copilot-key-autostart.desktop  per-user setup at login
-sounds/                  eight CC0 cues
+sounds/                  eight CC0 cues; crystal/ and felt/ are two more themes
 tools/generate_sounds.py sound generator
 detect-key.sh            shows what the key actually sends
 doctor.sh                checks installation, audio chain and shortcut

@@ -60,6 +60,10 @@ shape = "circle"
 # accepts it inside [colors] too, because everybody trips over it once.)
 palette = ["#FF6B6B", "#FFD23F", "#3FA7FF"]
 
+# The sound theme that goes with this skin - a folder name from sounds/.
+# Heard by everyone who keeps sound_theme = "auto". See sound-themes.md.
+sound_theme = "crystal"
+
 [colors]
 backdrop = "#0B0A09"      # the dimmed desktop behind the wheel
 button = "#1C1A18"        # an unselected button

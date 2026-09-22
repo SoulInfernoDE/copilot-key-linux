@@ -51,6 +51,11 @@ def data_dirs() -> list[Path]:
     env = os.environ.get("COPILOT_KEY_DATA_DIR")
     if env:
         dirs.append(Path(env))
+    if (PROJECT_DIR / "install.sh").is_file():
+        # Started from a git checkout: its own skins and sounds come first.
+        # Otherwise an installed copy in /usr/local would quietly shadow every
+        # change made here until the next install.
+        dirs.append(PROJECT_DIR)
     home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     dirs.append(Path(home) / APP)
     raw = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
@@ -130,6 +135,10 @@ STRINGS = {
         "warn_no_tomllib": "tomllib unavailable (needs Python 3.11+) - using built-in defaults",
         "warn_skin_error": "skin {path} is broken: {error} - skipping it",
         "warn_skin_missing": "no skin called {name} - using the built-in one",
+        "warn_sound_missing": "sound file {path} not found - the theme plays instead",
+        "warn_sound_theme_missing": "no sound theme called {name} - using the glass bells",
+        "warn_theme_error": "sound theme file {path} is broken: {error}",
+        "sound_theme_default": "Glass",
         "warn_no_gsettings": "gsettings is missing - please bind the shortcut yourself",
         "warn_no_cinnamon": "no Cinnamon keybinding settings - bind {binding} to "
                             "copilot-key in your desktop settings",
@@ -139,6 +148,36 @@ STRINGS = {
         "cfg_tab_menu": "Menu entries",
         "cfg_tab_behaviour": "Behaviour",
         "cfg_tab_skin": "Skin",
+        "cfg_tab_sounds": "Sounds",
+        "snd_hint": "Which sound plays when. A theme sets all of them at once; a file of "
+                    "your own replaces a single one. \u201cAutomatic\u201d takes the theme "
+                    "the skin brings along.",
+        "snd_theme_heading": "Sound theme",
+        "snd_theme_auto": "Automatic \u2013 matching the skin",
+        "snd_theme_auto_hint": "{skin} brings \u201c{theme}\u201d",
+        "snd_theme_count": "{count} sounds",
+        "snd_cues_heading": "The sounds",
+        "cue_menu-open": "The menu opens",
+        "cue_menu-dismiss": "The menu closes",
+        "cue_launch": "An action starts",
+        "cue_toggle-show": "A window comes forward",
+        "cue_toggle-hide": "A window is minimised",
+        "cue_error": "Something is not available",
+        "cue_drag-lift": "A button is picked up",
+        "cue_drag-drop": "A button is put down",
+        "snd_src_theme": "from \u201c{theme}\u201d",
+        "snd_src_custom": "your own file: {name}",
+        "snd_src_muted": "muted",
+        "snd_src_missing": "no sound",
+        "snd_play": "Listen",
+        "snd_choose": "File\u2026",
+        "snd_choose_title": "A sound for \u201c{cue}\u201d",
+        "snd_reset": "Back to the theme",
+        "snd_mute": "Mute this one",
+        "snd_filter": "Sound files",
+        "snd_folder": "Open the sound folder",
+        "snd_guide": "How to make a sound theme",
+        "snd_copy_failed": "could not copy the file: {error}",
         "cfg_skin_hint": "How the wheel looks. Copy one of the files into your own "
                          "skin folder to build on it - the menu picks it up on the "
                          "next press.",
@@ -272,6 +311,10 @@ STRINGS = {
                            "verwende die eingebauten Vorgaben",
         "warn_skin_error": "Skin {path} ist defekt: {error} - wird \u00fcbersprungen",
         "warn_skin_missing": "kein Skin namens {name} - verwende den eingebauten",
+        "warn_sound_missing": "Sounddatei {path} nicht gefunden - das Theme spielt stattdessen",
+        "warn_sound_theme_missing": "kein Sound-Theme namens {name} - verwende die Glasglocken",
+        "warn_theme_error": "Sound-Theme-Datei {path} ist defekt: {error}",
+        "sound_theme_default": "Glas",
         "warn_no_gsettings": "gsettings fehlt - bitte das K\u00fcrzel selbst anlegen",
         "warn_no_cinnamon": "keine Cinnamon-Tastenk\u00fcrzel gefunden - bitte {binding} "
                             "in den Desktop-Einstellungen auf copilot-key legen",
@@ -281,6 +324,36 @@ STRINGS = {
         "cfg_tab_menu": "Men\u00fceintr\u00e4ge",
         "cfg_tab_behaviour": "Verhalten",
         "cfg_tab_skin": "Skin",
+        "cfg_tab_sounds": "Sounds",
+        "snd_hint": "Welcher Ton wann erklingt. Ein Theme legt alle auf einmal fest, eine "
+                    "eigene Datei ersetzt einen einzelnen. \u201eAutomatisch\u201c nimmt das "
+                    "Theme, das der Skin mitbringt.",
+        "snd_theme_heading": "Sound-Theme",
+        "snd_theme_auto": "Automatisch \u2013 passend zum Skin",
+        "snd_theme_auto_hint": "{skin} bringt \u201e{theme}\u201c mit",
+        "snd_theme_count": "{count} T\u00f6ne",
+        "snd_cues_heading": "Die T\u00f6ne",
+        "cue_menu-open": "Men\u00fc \u00f6ffnet sich",
+        "cue_menu-dismiss": "Men\u00fc schlie\u00dft sich",
+        "cue_launch": "Eine Aktion startet",
+        "cue_toggle-show": "Fenster kommt nach vorne",
+        "cue_toggle-hide": "Fenster wird minimiert",
+        "cue_error": "Etwas ist nicht verf\u00fcgbar",
+        "cue_drag-lift": "Ein Button wird angehoben",
+        "cue_drag-drop": "Ein Button wird abgelegt",
+        "snd_src_theme": "aus \u201e{theme}\u201c",
+        "snd_src_custom": "eigene Datei: {name}",
+        "snd_src_muted": "stumm",
+        "snd_src_missing": "kein Ton",
+        "snd_play": "Anh\u00f6ren",
+        "snd_choose": "Datei\u2026",
+        "snd_choose_title": "Ein Ton f\u00fcr \u201e{cue}\u201c",
+        "snd_reset": "Zur\u00fcck zum Theme",
+        "snd_mute": "Diesen Ton stummschalten",
+        "snd_filter": "Sounddateien",
+        "snd_folder": "Sound-Ordner \u00f6ffnen",
+        "snd_guide": "Anleitung: eigene Sound-Themes",
+        "snd_copy_failed": "Datei lie\u00df sich nicht kopieren: {error}",
         "cfg_skin_hint": "Wie das Rad aussieht. F\u00fcr einen eigenen Skin eine der "
                          "Dateien in den eigenen Skin-Ordner kopieren - das Men\u00fc "
                          "nimmt sie beim n\u00e4chsten Druck.",
@@ -390,9 +463,11 @@ def tr(key: str, **fields) -> str:
 # --------------------------------------------------------------- config ----
 
 DEFAULT_CONFIG = {
+    "sounds": {},                     # cue -> hand-picked file, or "none"
     "general": {
         "sounds": True,
         "volume": 0.7,
+        "sound_theme": "auto",        # auto = the one the skin names
         "double_press_ms": 450,
         "single_press": "toggle_or_menu",  # toggle_or_menu | menu | toggle
         "menu_title": tr("menu_title"),
@@ -463,6 +538,10 @@ def load_config() -> dict:
     cfg["general"].update(user.get("general", {}))
     if user.get("actions"):
         cfg["actions"] = user["actions"]
+    sounds = user.get("sounds", {})
+    if isinstance(sounds, dict):
+        cfg["sounds"] = {str(k): str(v) for k, v in sounds.items()
+                         if isinstance(v, (str, bool))}
     return cfg
 
 
@@ -479,6 +558,10 @@ def warn(msg: str) -> None:
 GENERAL_COMMENTS = [
     ("sounds", "Sounds on or off."),
     ("volume", "Cue volume, 0.0 to 1.0."),
+    ("sound_theme",
+     'Sound theme: "auto" takes the one the skin names, otherwise a directory\n'
+     'name from sounds/ - "default" (glass bells), "crystal", "felt", or your\n'
+     "own. docs/sound-themes.md explains how to make one."),
     ("double_press_ms", "Time window for the double press, in milliseconds."),
     ("single_press",
      "What a single press does:\n"
@@ -525,6 +608,15 @@ window_class : substring of the window's WM_CLASS (used for toggling).
                Find yours with:  wmctrl -lx
 primary      : exactly one action should be primary = true - that is the one
                a single key press toggles."""
+
+SOUNDS_COMMENT = """--- sounds -----------------------------------------------------------------
+One file per cue, overruling the sound theme for just that cue. A bare file
+name is looked up in ~/.config/copilot-key/sounds/, "~/..." and absolute
+paths work as well, and "none" mutes that one cue. The editor's Sounds tab
+fills this in - and copies the file there, so tidying Downloads breaks nothing.
+
+Cues: menu-open, menu-dismiss, launch, toggle-show, toggle-hide, error,
+      drag-lift, drag-drop"""
 
 TEMPLATE_HEADER = """copilot-key - configuration{variant}
 Copied to ~/.config/copilot-key/config.toml during installation.
@@ -589,6 +681,14 @@ def dump_config(cfg: dict, header: str) -> str:
         if key not in known:
             out.append(f"\n{key} = {toml_value(value)}\n")
 
+    # One file per cue, written even when empty so the place is easy to find.
+    out.append("\n\n")
+    out.append(comment_block(SOUNDS_COMMENT))
+    out.append("[sounds]\n")
+    for key, value in (cfg.get("sounds") or {}).items():
+        name = key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else toml_string(key)
+        out.append(f"{name} = {toml_value(value)}\n")
+
     out.append("\n\n")
     out.append(comment_block(ACTIONS_COMMENT))
     for action in cfg.get("actions", []):
@@ -602,7 +702,7 @@ def dump_config(cfg: dict, header: str) -> str:
     return "".join(out)
 
 
-def normalise_config(general: dict, actions: list) -> dict:
+def normalise_config(general: dict, actions: list, sounds: dict | None = None) -> dict:
     """Fill the gaps an edited configuration may have left.
 
     Ids are made unique and exactly one action stays primary, so a single key
@@ -632,7 +732,9 @@ def normalise_config(general: dict, actions: list) -> dict:
         item["primary"] = False
     if result and not primaries:
         result[0]["primary"] = True
-    return {"general": dict(general), "actions": result}
+    # The sound choices ride along untouched: whoever saves the actions must
+    # not take the hand-picked cues with them.
+    return {"general": dict(general), "sounds": dict(sounds or {}), "actions": result}
 
 
 def save_config(cfg: dict) -> Path:
@@ -1117,23 +1219,39 @@ def open_windows() -> list[tuple[str, str]]:
 class Sound:
     """Fire-and-forget cue playback."""
 
-    def __init__(self, enabled: bool, volume: float) -> None:
+    def __init__(self, enabled: bool, volume: float,
+                 resolver: "CueResolver | None" = None) -> None:
         self.enabled = enabled
         self.volume = max(0.0, min(1.0, float(volume)))
         self.player = SELF_DIR / "copilot-sound"
+        self.resolver = resolver
 
     def play(self, cue: str) -> None:
-        if not self.enabled or not self.player.exists():
+        if not self.enabled:
             return
-        env = dict(os.environ, COPILOT_KEY_SOUND_DIR=str(sound_dir()))
+        if self.resolver is None:
+            env = dict(os.environ, COPILOT_KEY_SOUND_DIR=str(sound_dir()))
+            self.spawn(cue, self.volume, env)
+            return
+        path, _source, gain = self.resolver.resolve(cue)
+        if path is not None:
+            self.spawn(str(path), self.volume * gain)
+
+    def play_file(self, path, gain: float = 1.0) -> None:
+        """A preview the user asked for - played even with sounds switched off."""
+        self.spawn(str(path), self.volume * gain)
+
+    def spawn(self, what: str, volume: float, env: "dict | None" = None) -> None:
+        if not self.player.exists():
+            return
         try:
             subprocess.Popen(
-                [str(self.player), cue, f"{self.volume:.3f}"],
+                [str(self.player), what, f"{max(0.0, min(1.0, volume)):.3f}"],
                 env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
         except OSError as exc:
-            warn(tr("warn_cue_failed", cue=cue, error=exc))
+            warn(tr("warn_cue_failed", cue=what, error=exc))
 
 
 # --------------------------------------------------------------- windows ---
@@ -1709,6 +1827,7 @@ class Skin:
         # rule everybody trips over once, so both spellings are accepted.
         palette = merged.get("palette") or colors.pop("palette", None) or []
         self.palette = [parse_color(entry) for entry in palette] if isinstance(palette, list) else []
+        self.sound_theme = str(merged.get("sound_theme", "") or "").strip()
 
     def item_base(self, index: int):
         """The base colour of button `index` - the palette makes it colourful."""
@@ -1758,6 +1877,175 @@ def load_skin(name: str) -> Skin:
         return skins[name]
     warn(tr("warn_skin_missing", name=name))
     return Skin(BUILTIN_SKIN, "terracotta")
+
+
+# ---------------------------------------------------------- sound themes ---
+# A sound theme is a directory of cue files with an optional theme.toml. The
+# glass bells are the flat sounds/ directory itself; every other theme is a
+# sub-directory of sounds/ in a data dir, or of the user's own
+# ~/.config/copilot-key/sounds/. Which file plays for a cue is a cascade, the
+# same way partial skins and partial translations fall back:
+#
+#   [sounds] in the config - one file per cue, or "none" to mute it
+#   -> the active theme -> the theme it inherits from -> the glass bells
+#
+# sound_theme = "auto" lets the skin decide, through sound_theme in its TOML.
+
+CUE_NAMES = ("menu-open", "menu-dismiss", "launch", "toggle-show",
+             "toggle-hide", "error", "drag-lift", "drag-drop")
+AUDIO_EXTENSIONS = (".ogg", ".oga", ".wav", ".flac", ".mp3")
+MUTED_VALUES = ("none", "off", "mute", "muted", "silent", "false", "")
+
+
+def user_sound_dir() -> Path:
+    """The user's own sound files (flat) and sound themes (sub-directories)."""
+    return config_path().parent / "sounds"
+
+
+def localized_value(data: dict, key: str) -> str:
+    """name_de over name - the way desktop files do Name[de]."""
+    return str(data.get(f"{key}_{LANG}") or data.get(key) or "")
+
+
+def valid_theme_id(theme_id: str) -> bool:
+    return bool(theme_id) and "/" not in theme_id and not theme_id.startswith(".")
+
+
+def sound_theme_dirs(theme_id: str) -> list[Path]:
+    """Where a theme's files may lie, the user's own copy first."""
+    if not valid_theme_id(theme_id):
+        return []
+    user_root = user_sound_dir()
+    data_roots = list(dict.fromkeys(base / "sounds" for base in data_dirs()))
+    if theme_id == "default":
+        candidates = [user_root / "default", *data_roots]
+    else:
+        candidates = [user_root / theme_id, *(root / theme_id for root in data_roots)]
+    return [d for d in dict.fromkeys(candidates) if d.is_dir()]
+
+
+def read_theme_toml(directory: Path) -> dict:
+    path = directory / "theme.toml"
+    if not path.is_file():
+        return {}
+    try:
+        import tomllib
+
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except Exception as exc:        # a broken theme must never break the key
+        warn(tr("warn_theme_error", path=path, error=exc))
+        return {}
+
+
+class SoundTheme:
+    """One set of cues, possibly incomplete - it inherits the rest."""
+
+    def __init__(self, theme_id: str, dirs: list[Path], data: dict) -> None:
+        self.id = theme_id
+        self.dirs = dirs
+        fallback = tr("sound_theme_default") if theme_id == "default" else theme_id
+        self.name = localized_value(data, "name") or fallback
+        self.description = localized_value(data, "description")
+        self.author = str(data.get("author", ""))
+        parent = "" if theme_id == "default" else "default"
+        self.inherits = str(data.get("inherits", parent) or "").strip()
+        try:
+            self.gain = max(0.0, min(1.0, float(data.get("gain", 1.0))))
+        except (TypeError, ValueError):
+            self.gain = 1.0
+
+    def file_for(self, cue: str) -> "Path | None":
+        for directory in self.dirs:
+            for ext in AUDIO_EXTENSIONS:
+                candidate = directory / f"{cue}{ext}"
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    def cue_count(self) -> int:
+        return sum(1 for cue in CUE_NAMES if self.file_for(cue) is not None)
+
+
+def load_sound_theme(theme_id: str) -> "SoundTheme | None":
+    dirs = sound_theme_dirs(theme_id)
+    if not dirs and theme_id != "default":
+        return None
+    data = next((meta for meta in map(read_theme_toml, dirs) if meta), {})
+    return SoundTheme(theme_id, dirs, data)
+
+
+def available_sound_themes() -> "dict[str, SoundTheme]":
+    """Every theme that brings at least one cue - the glass bells first."""
+    roots = [user_sound_dir(), *(base / "sounds" for base in data_dirs())]
+    ids = set()
+    for root in dict.fromkeys(roots):
+        if root.is_dir():
+            ids.update(p.name for p in root.iterdir()
+                       if p.is_dir() and valid_theme_id(p.name) and p.name != "default")
+    themes = {"default": load_sound_theme("default")}
+    for theme_id in ids:
+        theme = load_sound_theme(theme_id)
+        if theme is not None and theme.cue_count():
+            themes[theme_id] = theme
+    rest = sorted((item for item in themes.items() if item[0] != "default"),
+                  key=lambda item: item[1].name.lower())
+    return {"default": themes["default"], **dict(rest)}
+
+
+def custom_sound_path(value: str) -> Path:
+    """A hand-picked file: absolute, ~/..., or a name in the user's sound dir."""
+    path = Path(os.path.expanduser(str(value).strip()))
+    return path if path.is_absolute() else user_sound_dir() / path
+
+
+class CueResolver:
+    """Which file plays for a cue - the cascade above, worked out once."""
+
+    def __init__(self, cfg: dict, skin: "Skin | None" = None) -> None:
+        self.general = cfg.get("general", {})
+        self.overrides = {str(k): str(v) for k, v in (cfg.get("sounds") or {}).items()}
+        self.skin = skin
+        self._chain: "list[SoundTheme] | None" = None
+
+    def theme_id(self) -> str:
+        wanted = str(self.general.get("sound_theme", "auto") or "auto").strip()
+        if wanted.lower() == "auto":
+            skin = self.skin or load_skin(self.general.get("menu_skin", "terracotta"))
+            wanted = skin.sound_theme or "default"
+        return wanted
+
+    def chain(self) -> "list[SoundTheme]":
+        if self._chain is None:
+            chain, seen, current = [], set(), self.theme_id()
+            while current and current not in seen:
+                seen.add(current)
+                theme = load_sound_theme(current)
+                if theme is None:
+                    warn(tr("warn_sound_theme_missing", name=current))
+                    break
+                chain.append(theme)
+                current = theme.inherits
+            if not any(theme.id == "default" for theme in chain):
+                chain.append(load_sound_theme("default"))
+            self._chain = chain
+        return self._chain
+
+    def resolve(self, cue: str):
+        """(file or None, where it came from, gain) for one cue."""
+        if cue in self.overrides:
+            value = self.overrides[cue]
+            if value.strip().lower() in MUTED_VALUES:
+                return None, "muted", 1.0
+            path = custom_sound_path(value)
+            if path.is_file():
+                return path, "custom", 1.0
+            warn(tr("warn_sound_missing", path=path))
+        for theme in self.chain():
+            found = theme.file_for(cue)
+            if found is not None:
+                return found, theme.id, theme.gain
+        return None, "missing", 1.0
 
 
 # ------------------------------------------------------------ skin paint ---
@@ -3008,7 +3296,7 @@ class RadialMenu:
         if not keep:
             return
         try:
-            save_config(normalise_config(self.general, keep))
+            save_config(normalise_config(self.general, keep, self.cfg.get("sounds")))
         except OSError as exc:
             warn(tr("cfg_save_failed", error=exc))
             self.sound.play("error")
@@ -3326,7 +3614,8 @@ def main(argv: list[str]) -> int:
     ensure_user_config()        # every user starts from the shipped defaults
     cfg = load_config()
     general = cfg["general"]
-    sound = Sound(bool(general.get("sounds", True)), general.get("volume", 0.7))
+    sound = Sound(bool(general.get("sounds", True)), general.get("volume", 0.7),
+                  CueResolver(cfg))
 
     mode = "auto"
     if len(argv) > 1:
@@ -3341,9 +3630,16 @@ def main(argv: list[str]) -> int:
         launch_resolved({"command": "@configure"}, sound)
         return 0
     elif mode in ("test-sounds",):
-        for cue in ("menu-open", "toggle-show", "toggle-hide", "launch",
-                    "menu-dismiss", "error", "drag-lift", "drag-drop"):
-            print(f"  {cue}")
+        # Says which file answers each cue - the one question a theme author has.
+        resolver = sound.resolver or CueResolver(cfg)
+        print(f"  {resolver.theme_id()}")
+        for cue in CUE_NAMES:
+            path, source, _gain = resolver.resolve(cue)
+            if path is not None:
+                where = str(path)
+            else:
+                where = tr("snd_src_muted") if source == "muted" else tr("snd_src_missing")
+            print(f"  {cue:<13} {where}")
             sound.play(cue)
             time.sleep(1.0)
         return 0

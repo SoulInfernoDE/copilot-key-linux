@@ -114,11 +114,23 @@ $SUDO install -m 755 "$SRC/bin/copilot-sound"  "$BIN_DIR/copilot-sound"
 $SUDO install -m 755 "$SRC/bin/copilot-config" "$BIN_DIR/copilot-config"
 $SUDO install -m 644 "$SRC"/sounds/*.ogg "$DATA_DIR/sounds/" 2>/dev/null \
     || $SUDO install -m 644 "$SRC"/sounds/*.wav "$DATA_DIR/sounds/"
+[ -f "$SRC/sounds/theme.toml" ] && $SUDO install -m 644 "$SRC/sounds/theme.toml" "$DATA_DIR/sounds/"
+# Every further sound theme is a directory of its own next to the glass bells.
+themes=()
+for theme in "$SRC"/sounds/*/; do
+    [ -d "$theme" ] || continue
+    name="$(basename "$theme")"
+    $SUDO mkdir -p "$DATA_DIR/sounds/$name"
+    $SUDO install -m 644 "$theme"* "$DATA_DIR/sounds/$name/"
+    themes+=("$name")
+done
+[ -f "$SRC/docs/sound-themes.md" ] && $SUDO install -m 644 "$SRC/docs/sound-themes.md" "$DATA_DIR/docs/"
 $SUDO install -m 644 "$SRC"/skins/*.toml "$DATA_DIR/skins/"
 [ -f "$SRC/docs/skins.md" ] && $SUDO install -m 644 "$SRC/docs/skins.md" "$DATA_DIR/docs/"
 ok "$(t files_launcher "$BIN_DIR/copilot-key")"
 ok "$(t files_editor "$BIN_DIR/copilot-config")"
 ok "$(t files_sounds "$DATA_DIR/sounds")"
+[ ${#themes[@]} -gt 0 ] && ok "$(t files_sound_themes "${themes[*]}")"
 ok "$(t files_skins "$DATA_DIR/skins")"
 
 # The editor is an ordinary application too, so it belongs in the start menu.

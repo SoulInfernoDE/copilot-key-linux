@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Play one cue from the Copilot-key sound set.
 #
-# Usage: copilot-sound <cue-name> [volume 0.0-1.0]
+# Usage: copilot-sound <cue-name | file> [volume 0.0-1.0]
 #
 # Cues live in $COPILOT_KEY_SOUND_DIR; without it the usual places are tried:
 # the user's own share directory, /usr/local/share and /usr/share for a
@@ -36,9 +36,15 @@ fi
 debug() { [ "${COPILOT_KEY_DEBUG:-0}" = "1" ] && printf 'copilot-sound: %s\n' "$*" >&2; return 0; }
 
 file=""
-for ext in ogg wav; do
-    [ -f "$sound_dir/$cue.$ext" ] && { file="$sound_dir/$cue.$ext"; break; }
-done
+if [ -f "$cue" ]; then
+    # A path: the launcher has already worked out the sound theme and any
+    # hand-picked file, so there is nothing left to look up.
+    file="$cue"
+else
+    for ext in ogg wav; do
+        [ -f "$sound_dir/$cue.$ext" ] && { file="$sound_dir/$cue.$ext"; break; }
+    done
+fi
 if [ -z "$file" ]; then
     debug "cue '$cue' not found in '$sound_dir'"
     exit 0   # a missing cue is never fatal

@@ -5,6 +5,10 @@
 
 name = "Aurora 3D"
 author = "copilot-key"
+
+# The sound theme this skin brings along (bright chimes to go with the glass spheres).
+# Used while sound_theme = "auto"; see docs/sound-themes.md.
+sound_theme = "crystal"
 style = "glass"
 shape = "circle"
 

@@ -289,8 +289,26 @@ Generator liegt bei und erzeugt sie identisch neu:
 python3 tools/generate_sounds.py sounds
 ```
 
-Eigene Sounds: gleichnamige `.ogg`- oder `.wav`-Dateien in
-`~/.local/share/copilot-key/sounds` ablegen.
+### Sound-Themes
+
+Die Glasglocken sind eins von drei Themes:
+
+| Theme | Klang | Gehört zum Skin |
+|---|---|---|
+| `default` – Glas | weiche Glasglocken | Terracotta |
+| `crystal` – Kristall | helle Glöckchen eine Oktave höher | Aurora 3D |
+| `felt` – Filz | weiche Holzschlägel, tief und gedämpft | Mint |
+
+`sound_theme = "auto"` – die Vorgabe – spielt, was der Skin mitbringt; ein fest
+gewähltes Theme bleibt, egal welcher Skin. Der Reiter **Sounds** im Editor
+listet die Themes, spielt jeden Ton auf Wunsch vor und ersetzt einzelne durch
+eine eigene Datei oder schaltet sie stumm. Eine solche Datei wird nach
+`~/.config/copilot-key/sounds/` kopiert – Aufräumen im Download-Ordner macht
+also nichts kaputt.
+
+Ein eigenes Theme ist ein Ordner mit Audiodateien – vollständig muss es nicht
+sein, was fehlt, kommt aus dem Theme, von dem es erbt.
+**[docs/sound-themes.md](docs/sound-themes.md)** erklärt die Einzelheiten.
 
 ---
 
@@ -318,13 +336,14 @@ bin/copilot-sound        Sound-Wiedergabe (paplay / pw-play / ffplay / mpv / apl
 bin/copilot-config       grafischer Menü-Editor mit App-Suche
 skins/                   die drei mitgelieferten Skins
 docs/skins.md            Anleitung für eigene Skins
+docs/sound-themes.md     Anleitung für eigene Sound-Themes
 lib/i18n.sh              Textkatalog für die Shell-Skripte
 config/config.toml       Konfigurationsvorlage (englisch, vom Editor erzeugt)
 config/config.de.toml    Konfigurationsvorlage (deutsch, vom Editor erzeugt)
 config/keyd-copilot.conf keyd-Regel für den Copilot-Akkord
 config/copilot-key-config.desktop  Startmenü-Eintrag für den Editor
 config/copilot-key-autostart.desktop  Einrichtung pro Nutzer beim Login
-sounds/                  acht CC0-Cues
+sounds/                  acht CC0-Cues; crystal/ und felt/ sind zwei weitere Themes
 tools/generate_sounds.py Sound-Generator
 detect-key.sh            zeigt, was die Taste tatsächlich sendet
 doctor.sh                prüft Installation, Audio-Kette und Tastenkürzel
