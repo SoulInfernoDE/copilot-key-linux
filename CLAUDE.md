@@ -257,10 +257,24 @@ Check both `LANG=en_US.UTF-8` and `LANG=de_DE.UTF-8` after touching any text.
 ## Sound design
 
 Eight cues, one family: soft glass bells on a pentatonic scale over D, under
-0.9 s, peak −18 dBFS, gentle attack. Move between notes in steps, not glides:
-the first `toggle-hide` bent one bell downwards, and a decaying note that
-slowly goes flat - it sagged by two thirds of a semitone - sounds out of tune
-rather than calm. A short upward bend (`toggle-show`) gets away with it. `tools/generate_sounds.py` builds them
+0.9 s, peak −18 dBFS, gentle attack. Three rules learned the hard way, all
+from cues that sounded slightly out of tune:
+
+- Move between notes in steps, not glides. A decaying bell that drifts sounds
+  detuned in either direction: `toggle-hide` sagged by two thirds of a
+  semitone, `toggle-show` rose by half of one. The drag cues keep their bends
+  on purpose - a pluck and a plop are gestures, not notes.
+- Where notes overlap, tune the interval pure (`FS5_PURE` = D5 × 5/4). Equal
+  temperament puts the major third 14 cents sharp, which a melody hides and
+  two ringing bells do not.
+- The default bell has an inharmonic partial at 3.01 × the fundamental. Alone
+  it is the glassy shimmer; next to another note it can land a few Hz from one
+  of that note's partials and beat - in `menu-open` D5's third partial and
+  A5's second were 7.9 Hz apart, so that cue now uses pure fifths
+  (`A4_PURE`, `A5_PURE`) and leaves the partial out. Measure before blaming
+  the ears.
+
+`tools/generate_sounds.py` builds them
 with additive synthesis in numpy and encodes to Ogg via ffmpeg — no samples, no
 recordings, which is what keeps them CC0.
 

@@ -269,7 +269,7 @@ Attack, damit nichts klickt oder aufdringlich wirkt:
 | `menu-open` | Menü öffnet sich | zwei aufsteigende Töne, fragend |
 | `menu-dismiss` | Menü mit Esc geschlossen | dasselbe abwärts, gedämpft |
 | `launch` | Aktion wird gestartet | aufsteigendes Arpeggio, bestätigend |
-| `toggle-show` | Fenster kommt nach vorne | heller Blip mit Aufwärts-Glide |
+| `toggle-show` | Fenster kommt nach vorne | zwei helle Töne, eine reine Terz aufwärts |
 | `toggle-hide` | Fenster wird minimiert | das Gegenstück: zwei weiche Töne, eine Terz abwärts |
 | `error` | Aktion nicht ausführbar | tiefer Doppelton, bewusst nicht schrill |
 | `drag-lift` | ein Button wird angehoben | kurzer Zupfer aufwärts |
