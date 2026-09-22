@@ -95,7 +95,12 @@ STRINGS = {
                        "Enter takes it  \u00b7  Esc cancels",
         "tool_config": "Open the editor",
         "tool_edit": "Edit the wheel right here",
-        "search_placeholder": "Which application?",
+        "search_placeholder": "Which application \u2013 or which command?",
+        "cmd_run_hint": "command \u00b7 runs in the background",
+        "cmd_terminal_hint": "command \u00b7 in a terminal window",
+        "cmd_url_hint": "address \u00b7 opens in the browser",
+        "cmd_not_found": "no program called \u201c{program}\u201d here",
+        "warn_bad_command": "cannot read the command {command}: {error}",
         "search_icon": "Which symbol?",
         "hint_icon": "Type to search  \u00b7  Enter takes it  \u00b7  the button itself "
                      "brings its original icon back  \u00b7  Esc cancels",
@@ -269,7 +274,12 @@ STRINGS = {
                        "Enter \u00fcbernimmt  \u00b7  Esc bricht ab",
         "tool_config": "Editor \u00f6ffnen",
         "tool_edit": "Rad direkt hier bearbeiten",
-        "search_placeholder": "Welche Anwendung?",
+        "search_placeholder": "Welche Anwendung \u2013 oder welcher Befehl?",
+        "cmd_run_hint": "Befehl \u00b7 l\u00e4uft im Hintergrund",
+        "cmd_terminal_hint": "Befehl \u00b7 in einem Terminalfenster",
+        "cmd_url_hint": "Adresse \u00b7 \u00f6ffnet im Browser",
+        "cmd_not_found": "kein Programm namens \u201e{program}\u201c gefunden",
+        "warn_bad_command": "Befehl {command} nicht lesbar: {error}",
         "search_icon": "Welches Symbol?",
         "hint_icon": "Tippen zum Suchen  \u00b7  Enter \u00fcbernimmt  \u00b7  der Button "
                      "selbst holt sein Original-Icon zur\u00fcck  \u00b7  Esc bricht ab",
@@ -1177,6 +1187,103 @@ def icon_choices(query: str, apps: list) -> list:
     return out
 
 
+# ------------------------------------------------------ typed commands ---
+# The wheel's search does not only find applications: whatever is typed may
+# also be a command line or an address. Offered only when it can work - the
+# program has to exist - so a half-typed app name never turns into a command.
+
+# An address: with a scheme or www., a host followed by a path, or a bare host
+# on a common ending - "notes.txt" must not turn into a web page.
+URL_PATTERN = re.compile(
+    r"^(https?://\S+|www\.\S+|[\w-]+(\.[\w-]+)+/\S*"
+    r"|[\w-]+(\.[\w-]+)*\.(com|org|net|de|at|ch|eu|io|ai|dev|app|info|me|tv))$",
+    re.IGNORECASE)
+SHELL_SYNTAX = set("|&;<>$`~*()")
+SHELL_BUILTINS = {"cd", "export", "source", ".", "test", "[", "exec", "command"}
+
+
+class CommandChoice(App):
+    """A search row that is no application: a command line or an address.
+
+    It behaves like an App for whoever takes it - name, command, terminal -
+    and carries its own wording for the row it is shown in.
+    """
+
+    def __init__(self, row_title: str, row_hint: str, label: str, command: str,
+                 icon: str, icon_name: str = "", terminal: bool = False) -> None:
+        super().__init__(name=label, comment=row_title, command=command,
+                         window_class="", icon_name=icon_name, icon=icon,
+                         terminal=terminal)
+        self.row_title = row_title
+        self.row_hint = row_hint
+
+
+def command_words(line: str) -> list[str]:
+    try:
+        return shlex.split(line)
+    except ValueError:
+        return []
+
+
+def program_exists(program: str) -> bool:
+    program = os.path.expanduser(program)
+    if "/" in program:
+        return os.path.isfile(program) and os.access(program, os.X_OK)
+    return shutil.which(program) is not None or program in SHELL_BUILTINS
+
+
+def command_label(line: str) -> str:
+    """A readable name for a command line - the program's own name if it has one."""
+    words = command_words(line)
+    if not words:
+        return line
+    head = Path(os.path.expanduser(words[0])).name
+    app = app_for_program(head)
+    name = app.name if app else head[:1].upper() + head[1:]
+    rest = " ".join(words[1:])
+    return f"{name} \u2013 {rest}" if rest else name
+
+
+def url_label(url: str) -> str:
+    from urllib.parse import urlparse
+
+    host = urlparse(url).netloc or url
+    return host[4:] if host.lower().startswith("www.") else host
+
+
+def command_choices(typed: str, has_apps: bool) -> "tuple[list, str]":
+    """Rows for what was typed, if it is a command or an address.
+
+    Returns the rows plus a note for a command that cannot work - "no
+    program called ..." tells more than an empty list would.
+    """
+    text = typed.strip()
+    if not text:
+        return [], ""
+    if URL_PATTERN.match(text):
+        url = text if "://" in text else f"https://{text}"
+        browser = app_for_desktop_id(default_handler("browser"))
+        return [CommandChoice(url, tr("cmd_url_hint"), url_label(url), f"@browser {url}",
+                              "globe", browser.icon_name if browser else "")], ""
+    # A single word that finds applications is an application search; with
+    # arguments, or with nothing found, it may well be a command.
+    if " " not in text and has_apps:
+        return [], ""
+    words = command_words(text)
+    if not words:
+        return [], ""
+    if not program_exists(words[0]):
+        return [], tr("cmd_not_found", program=words[0]) if " " in text else ""
+    app = app_for_program(Path(os.path.expanduser(words[0])).name)
+    label = command_label(text)
+    return [
+        CommandChoice(text, tr("cmd_run_hint"), label, text,
+                      app.icon if app else "terminal", app.icon_name if app else ""),
+        CommandChoice(text, tr("cmd_terminal_hint"), label, text, "terminal", "",
+                      terminal=True),
+    ], ""
+
+
 def match_score(app: App, query: str) -> int:
     """Lower is better; -1 means "does not match at all"."""
     if not query:
@@ -1387,7 +1494,16 @@ def resolve(command: str) -> list[str] | None:
             return ["xdg-open", str(path)]
         return None
 
-    return shlex.split(command)
+    if any(ch in SHELL_SYNTAX for ch in command):
+        # Pipes, &&, redirections and ~ need a shell - a command typed into
+        # the wheel should behave the way it does in a terminal.
+        return ["sh", "-c", command]
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:        # unbalanced quotes: say so, do not crash
+        warn(tr("warn_bad_command", command=command, error=exc))
+        return None
+    return argv or None
 
 
 def write_default_config(path: Path) -> None:
@@ -2342,6 +2458,7 @@ class RadialMenu:
         self.hits_at = 0.0
         self.origin = (0, 0)
         self.original = ""              # the original icon of the slot being edited
+        self.search_note = ""           # why a typed command got no row
 
     # -- time ---------------------------------------------------------------
 
@@ -2399,12 +2516,14 @@ class RadialMenu:
     # -- geometry -----------------------------------------------------------
 
     def slot_count(self) -> int:
-        """Wheel positions: one per action, plus the placeholder in edit mode."""
-        return max(1, len(self.actions) + (1 if self.edit else 0))
+        """Wheel positions: one per action. The add button sits in the centre."""
+        return max(1, len(self.actions))
 
     def search_panel(self, width: int):
         """(x, y, width, height) of the whole search panel."""
         rows = len(self.search_hits[:self.MAX_HITS])
+        if not rows and self.search_text.strip():
+            rows = 1                    # room for "nothing found" and its reason
         height = self.PANEL_PAD * 2 + self.PANEL_BOX
         if rows:
             height += 8 + rows * self.PANEL_ROW
@@ -2554,7 +2673,7 @@ class RadialMenu:
             cr.stroke()
 
         self.draw_items(cr, cx, cy, radius, button, count, fade_in, dt)
-        self.draw_centre(cr, cx, cy, button, fade_in)
+        self.draw_centre(cr, cx, cy, radius, button, count, fade_in)
         if self.search_progress() > 0.005:
             self.draw_search(cr, width, fade_in)
 
@@ -2604,17 +2723,6 @@ class RadialMenu:
             self.boxes.append(("item", index, x, y, button * 1.22))
             self.draw_item(cr, index, x, y, size,
                            min(1.0, unrolling * 1.5) * fade_in, is_selected)
-
-        if self.edit and not self.dragging:
-            alive.add("add")
-            state = self.tween("add", self.slot_angle(len(self.actions), count), dt,
-                               self.edit_progress() < 1.0 or settled)
-            grow = ease_out_back(max(0.05, self.edit_progress()))
-            x = cx + math.cos(state["angle"]) * radius * grow
-            y = cy + math.sin(state["angle"]) * radius * grow
-            self.boxes.append(("add", -1, x, y, button * 1.1))
-            self.draw_add_slot(cr, x, y, button * 0.86 * state["scale"] * grow, fade_in,
-                               self.hover == len(self.actions))
 
         if self.dragging and self.drag_pos is not None:
             x, y = self.drag_pos
@@ -2721,7 +2829,7 @@ class RadialMenu:
         draw_icon(cr, icon, size * 1.05, (*skin.accent[:3], alpha))
         cr.restore()
 
-    def draw_add_slot(self, cr, x, y, radius, alpha, hovered) -> None:
+    def draw_add_slot(self, cr, x, y, radius, alpha, hovered, label=True) -> None:
         skin = self.skin
         radius = max(2.0, radius)
         cr.set_source_rgba(*skin.text[:3], (0.10 if hovered else 0.05) * alpha)
@@ -2739,6 +2847,8 @@ class RadialMenu:
         draw_icon(cr, "plus", radius * 0.8,
                   (*(skin.accent if hovered else skin.text_dim)[:3], alpha))
         cr.restore()
+        if not label:
+            return
         draw_text(cr, tr("cfg_add"), x, y + radius + 17, 12.0, hovered,
                   (*(skin.accent if hovered else skin.text_dim)[:3], 0.95 * alpha),
                   max_width=220)
@@ -2755,23 +2865,42 @@ class RadialMenu:
         cr.stroke()
         draw_text(cr, text, x, y, 10.5, True, (*color[:3], alpha))
 
-    def draw_centre(self, cr, cx, cy, button, fade_in) -> None:
+    def draw_centre(self, cr, cx, cy, ring, button, count, fade_in) -> None:
+        import math
+
         skin = self.skin
         radius = button * 0.82
         active = self.hover_centre or self.tools_at is not None
+        # In edit mode the add button takes the centre: it comes in from the
+        # gap after the last button and slides to the middle with the same
+        # overshoot the wheel unrolls with, while the sparkle gives way.
+        arrival = self.edit_progress() if self.edit else 0.0
+        sparkle = 1.0 - ease_out_cubic(min(1.0, arrival * 1.4))
 
-        cr.set_source_rgba(*shade(skin.button, 0.78)[:3], 0.92 * fade_in)
-        button_path(cr, skin, cx, cy, radius)
-        cr.fill_preserve()
-        cr.set_source_rgba(*skin.accent[:3], (0.55 if active else 0.10) * fade_in)
-        cr.set_line_width(2.0 if active else 1.0)
-        cr.stroke()
-        cr.save()
-        cr.translate(cx, cy)
-        draw_icon(cr, "sparkle", button * 0.72,
-                  (*skin.accent[:3], (1.0 if active else 0.85) * fade_in))
-        cr.restore()
-        self.boxes.append(("centre", -1, cx, cy, button * 0.9))
+        if sparkle > 0.01:
+            cr.set_source_rgba(*shade(skin.button, 0.78)[:3], 0.92 * fade_in * sparkle)
+            button_path(cr, skin, cx, cy, radius)
+            cr.fill_preserve()
+            cr.set_source_rgba(*skin.accent[:3], (0.55 if active else 0.10) * fade_in * sparkle)
+            cr.set_line_width(2.0 if active else 1.0)
+            cr.stroke()
+            cr.save()
+            cr.translate(cx, cy)
+            draw_icon(cr, "sparkle", button * 0.72,
+                      (*skin.accent[:3], (1.0 if active else 0.85) * fade_in * sparkle))
+            cr.restore()
+
+        if self.edit and not self.dragging:
+            travel = ease_out_back(arrival) if arrival < 1.0 else 1.0
+            gap = self.slot_angle(count - 0.5, count) if count > 1 else math.pi / 2
+            x = cx + math.cos(gap) * ring * (1.0 - travel)
+            y = cy + math.sin(gap) * ring * (1.0 - travel)
+            hovered = self.hover == len(self.actions)
+            self.draw_add_slot(cr, x, y, radius * (0.6 + 0.4 * min(1.0, arrival * 1.5)),
+                               fade_in, hovered, label=self.hover_tool < 0)
+            self.boxes.append(("add", -1, x, y, button * 0.9))
+        elif not self.edit:
+            self.boxes.append(("centre", -1, cx, cy, button * 0.9))
 
         opening = self.tools_progress()
         if opening <= 0.01 or self.dragging:
@@ -2905,16 +3034,19 @@ class RadialMenu:
                 draw_icon(cr, hit.icon, 21,
                           (*(skin.accent if chosen else skin.text)[:3], 0.95 * row_alpha))
             cr.restore()
-            draw_text(cr, hit.name, text_x + slide, middle - (8 if hit.comment else 0),
+            title = getattr(hit, "row_title", hit.name)
+            detail = getattr(hit, "row_hint", hit.comment)
+            draw_text(cr, title, text_x + slide, middle - (8 if detail else 0),
                       13.5, chosen, (*skin.text[:3], row_alpha),
                       max_width=box_w - 70, align="left")
-            if hit.comment:
-                draw_text(cr, hit.comment, text_x + slide, middle + 9, 11.0, False,
+            if detail:
+                draw_text(cr, detail, text_x + slide, middle + 9, 11.0, False,
                           (*skin.text_dim[:3], 0.9 * row_alpha),
                           max_width=box_w - 70, align="left")
         if self.search_text and not self.search_hits:
-            draw_text(cr, tr("cfg_apps_none"), text_x, box_y + box_h + 26, 13.0, False,
-                      (*skin.text_dim[:3], alpha), align="left")
+            draw_text(cr, self.search_note or tr("cfg_apps_none"), text_x,
+                      box_y + box_h + 8 + (self.PANEL_ROW - 6) / 2, 13.0, False,
+                      (*skin.text_dim[:3], alpha), max_width=box_w - 70, align="left")
 
     # -- what is under the pointer ------------------------------------------
 
@@ -3092,6 +3224,10 @@ class RadialMenu:
                 self.begin_close(self.actions[self.selected])
             self.area.queue_draw()
             return True
+        if name in ("plus", "KP_Add", "Insert") and self.edit:
+            self.add_slot()
+            self.area.queue_draw()
+            return True
         if name in ("Delete", "BackSpace") and self.edit:
             self.remove_slot(self.selected)
             self.area.queue_draw()
@@ -3201,6 +3337,7 @@ class RadialMenu:
 
     def close_search(self) -> None:
         self.original = ""
+        self.search_note = ""
         self.search_slot = -1
         self.search_at = None
         self.search_text = ""
@@ -3225,7 +3362,11 @@ class RadialMenu:
                 if score >= 0:
                     scored.append((score, app.name.lower(), app))
             scored.sort(key=lambda entry: (entry[0], entry[1]))
-            self.search_hits = [entry[2] for entry in scored[:self.MAX_HITS]]
+            apps = [entry[2] for entry in scored[:self.MAX_HITS]]
+            # A command or an address goes first: whoever typed arguments or
+            # a URL meant exactly that, not an application with a similar name.
+            commands, self.search_note = command_choices(self.search_text, bool(apps))
+            self.search_hits = (commands + apps)[:self.MAX_HITS]
         self.search_index = 0
         self.hits_at = time.monotonic()
 

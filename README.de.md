@@ -134,7 +134,14 @@ selbst zum Editor.
 * **Klick** auf einen Button fährt oberhalb des Rads eine Suchleiste aus.
   Tippen, mit `↑`/`↓` und `Enter` eine Anwendung wählen – sie landet auf dem
   angeklickten Button, der so lange leuchtet, bis er belegt ist.
-* **+** legt einen weiteren Button an, **✕** auf einem Button entfernt ihn.
+* **+** – beim Bearbeiten in die Mitte gerutscht – legt einen weiteren Button
+  an, **✕** auf einem Button entfernt ihn.
+* Die Suche nimmt auch **Befehle**: `waydroid session stop` eintippen, und sie
+  bietet an, ihn im Hintergrund oder in einem Terminal auszuführen – mit dem
+  Icon des Programms, falls es eins hat. Shell-Syntax funktioniert wie im
+  Terminal (`~`, `&&`, Pipes). Eine **Adresse** wie `github.com/…` wird zu „im
+  Browser öffnen". Angeboten wird ein Befehl nur, wenn es das Programm gibt –
+  sonst nennt die Liste, welches fehlt.
 * Das **Bild-Zeichen** auf einem Button ändert sein Symbol: dieselbe Suche,
   jetzt mit den gezeichneten Symbolen und dem Icon jeder installierten
   Anwendung. Ein Klick auf den pulsierenden Button selbst holt sein

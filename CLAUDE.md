@@ -102,10 +102,11 @@ is a constant or a pure function.
   Picking an app fills label, subtitle, command, window class and icon at once.
 - **The wheel's own editor.** `RadialMenu` keeps the whole overlay: the centre
   button reveals two tools, the pencil switches into edit mode, where items are
-  dragged to reorder (`order()` re-flows them live around `drop_slot()`), a
-  placeholder appends one, and clicking a button opens the Cairo-drawn search
-  panel - the wheel shrinks and moves below it while the button being filled
-  pulses. Every committed change goes straight to disk; placeholders that never
+  dragged to reorder (`order()` re-flows them live around `drop_slot()`), the
+  add button - which slides from the gap after the last button into the
+  centre, taking the sparkle's place - appends one, and clicking a button
+  opens the Cairo-drawn search panel - the wheel shrinks and moves below it
+  while the button being filled pulses. Every committed change goes straight to disk; placeholders that never
   got an application are dropped instead of being saved.
 - **Two searches, one panel.** `search_mode` is `app` or `icon`. The icon mode
   is opened by the picture badge on a button and lists the drawn symbols
@@ -114,6 +115,14 @@ is a constant or a pure function.
   `app_icon` plus `icon_source`, which is the per-button override of the
   `use_app_icons` setting - `themed_icon_for()` is the one place that decides,
   for both menus and both previews.
+- **Typed commands.** The app search also reads what was typed as a command
+  line or an address (`command_choices()`): arguments or a URL put a
+  `CommandChoice` row first - an `App` subclass, so taking it needs no special
+  case. A command is offered only when its program exists; otherwise the panel
+  says which one is missing. `resolve()` runs a plain command with shell syntax
+  (`~`, `&&`, pipes, redirections) through `sh -c`, so it behaves as it does in
+  a terminal, and an unreadable command line is reported instead of crashing
+  the launcher after the menu has closed.
 - **Nothing jumps.** Buttons are not placed at their slot angle; `tween()`
   eases each one towards it every frame (shortest way round the circle) and
   everything that appears grows in from a quarter of its size. Reordering,

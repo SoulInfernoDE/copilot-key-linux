@@ -133,7 +133,14 @@ editor.
 * **Click** a button and a search bar slides in above the wheel. Type, pick an
   application with `↑`/`↓` and `Enter`, and it lands on the button you clicked
   — which glows until it has one.
-* **+** adds another button, **✕** on a button removes it.
+* **+** — which slides into the centre while you edit — adds another button,
+  **✕** on a button removes it.
+* The search also takes **a command**: type `waydroid session stop` and it
+  offers to run it in the background or in a terminal, with the program's own
+  icon if it has one. Shell syntax works as it does in a terminal (`~`, `&&`,
+  pipes). An **address** such as `github.com/…` becomes "open in the browser".
+  A command is only offered when its program exists — otherwise the list says
+  which one is missing.
 * The **picture badge** on a button changes its symbol: the same search, now
   offering the drawn symbols and the icon of every installed application.
   Clicking the pulsing button itself puts its original icon back.
