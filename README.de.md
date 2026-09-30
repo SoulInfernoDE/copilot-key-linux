@@ -145,7 +145,10 @@ selbst zum Editor.
 * Das **Bild-Zeichen** auf einem Button ändert sein Symbol: dieselbe Suche,
   jetzt mit den gezeichneten Symbolen und dem Icon jeder installierten
   Anwendung. Ein Klick auf den pulsierenden Button selbst holt sein
-  Original-Icon zurück.
+  Original-Icon zurück – bei einer Website ihr Favicon. Geladen wird es nur
+  dann, auf deinen Klick und direkt von der Seite (ohne Icon-Dienst
+  dazwischen), und in `~/.config/copilot-key/icons/` abgelegt, danach also
+  auch offline verfügbar.
 * `Esc` verlässt den Editiermodus, `Esc` noch einmal schließt das Menü.
 
 Einen Speichern-Knopf gibt es nicht: jede Änderung steht sofort in der Datei.

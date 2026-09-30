@@ -143,7 +143,10 @@ editor.
   which one is missing.
 * The **picture badge** on a button changes its symbol: the same search, now
   offering the drawn symbols and the icon of every installed application.
-  Clicking the pulsing button itself puts its original icon back.
+  Clicking the pulsing button itself puts its original icon back — for a
+  website that is its favicon. It is fetched only then, on your click and
+  straight from the site (no icon service in between), and kept in
+  `~/.config/copilot-key/icons/`, so it works offline from then on.
 * `Esc` leaves the editor, `Esc` again closes the menu.
 
 There is no save button: every change is written the moment you make it.

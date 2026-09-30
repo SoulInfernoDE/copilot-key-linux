@@ -11,6 +11,7 @@ this script only reacts to being started.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -106,6 +107,9 @@ STRINGS = {
                      "brings its original icon back  \u00b7  Esc cancels",
         "use_original_icon": "use the original icon",
         "icon_original_hint": "the icon installed with the application",
+        "icon_favicon_hint": "the website's own icon \u2013 loaded from {host}",
+        "favicon_loading": "Loading the icon of {host}\u2026",
+        "favicon_failed": "{host} gave out no icon \u2013 the browser's is used instead",
         "icon_builtin": "drawn symbol",
         "icon_from_app": "icon of this application",
         "icon_window": "Window",
@@ -285,6 +289,9 @@ STRINGS = {
                      "selbst holt sein Original-Icon zur\u00fcck  \u00b7  Esc bricht ab",
         "use_original_icon": "Original-Icon verwenden",
         "icon_original_hint": "das Icon, das mit der Anwendung installiert wurde",
+        "icon_favicon_hint": "das Icon der Website \u2013 wird von {host} geladen",
+        "favicon_loading": "Lade das Icon von {host}\u2026",
+        "favicon_failed": "{host} liefert kein Icon \u2013 stattdessen das des Browsers",
         "icon_builtin": "gezeichnetes Symbol",
         "icon_from_app": "Icon dieser Anwendung",
         "icon_window": "Fenster",
@@ -988,6 +995,7 @@ def app_for_desktop_id(desktop_id: str) -> "App | None":
     return None
 
 
+@functools.lru_cache(maxsize=None)
 def default_handler(kind: str) -> str:
     """The desktop file of the user's default browser or text editor."""
     if kind == "browser":
@@ -1001,6 +1009,7 @@ def icon_available(name: str) -> bool:
     """Whether a themed icon name (or an icon file) can actually be drawn."""
     if not name:
         return False
+    name = os.path.expanduser(name)
     if name.startswith("/"):
         return Path(name).is_file()
     if Gtk is None:
@@ -1046,6 +1055,11 @@ def icon_candidates(command: str, window_class: str = ""):
             yield app.icon_name
         fallback = FALLBACK_ICONS["terminal"]
     elif command.startswith("@browser "):
+        # Only what was fetched on an earlier click: resolving never goes
+        # online - the wheel would wait on the network to draw a button.
+        favicon = cached_favicon(browser_url(command))
+        if favicon:
+            yield favicon
         app = app_for_desktop_id(default_handler("browser"))
         if app:
             yield app.icon_name
@@ -1131,8 +1145,9 @@ def load_app_icon(name: str, size: int):
         return _icon_cache[key]
     pixbuf = None
     try:
-        if name.startswith("/"):
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(name, size, size)
+        if name.startswith(("/", "~")):
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                os.path.expanduser(name), size, size)
         else:
             pixbuf = Gtk.IconTheme.get_default().load_icon(
                 name, size, Gtk.IconLookupFlags.FORCE_SIZE)
@@ -1155,16 +1170,273 @@ def draw_app_icon(cr, name: str, size: float, alpha: float = 1.0) -> bool:
     return True
 
 
+# -------------------------------------------------------------- favicons ---
+# The original icon of a website is its favicon. It is fetched on an explicit
+# click only - never while the wheel is drawn, so the menu never waits on the
+# network and merely opening it asks nobody anything - and straight from the
+# site: an icon service in between would get to see every address. It is kept
+# per host in the user's own icon folder as a PNG, which makes it work
+# offline afterwards and spares a second entry for the same site a download.
+
+FAVICON_TIMEOUT = 6.0
+FAVICON_PAGE_LIMIT = 512 * 1024      # the <head> sits at the top of the page
+FAVICON_FILE_LIMIT = 1024 * 1024
+FAVICON_SIZE = 128
+FAVICON_AGENT = "Mozilla/5.0 (X11; Linux x86_64) copilot-key"
+
+
+def user_icon_dir() -> Path:
+    return config_path().parent / "icons"
+
+
+def browser_url(command: str) -> str:
+    """The address an "@browser <url>" entry opens; "" for anything else."""
+    command = str(command or "").strip()
+    if not command.startswith("@browser "):
+        return ""
+    url = command[len("@browser "):].strip()
+    return url if url.lower().startswith(("http://", "https://")) else ""
+
+
+def url_host(url: str) -> str:
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def favicon_file(url: str) -> "Path | None":
+    host = url_host(url)
+    if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)*", host):
+        return None
+    return user_icon_dir() / f"{host}.png"
+
+
+def config_relative(path: Path) -> str:
+    """~/... rather than the absolute home path - the config stays portable."""
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def cached_favicon(url: str) -> str:
+    target = favicon_file(url)
+    return config_relative(target) if target is not None and target.is_file() else ""
+
+
+def favicon_links(html: str) -> list[str]:
+    """The icons a page declares, the most useful first."""
+    from html.parser import HTMLParser
+
+    found: list[tuple[int, int, str]] = []      # (preference, size, href)
+
+    class Links(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag != "link":
+                return
+            attr = {key.lower(): (value or "") for key, value in attrs}
+            rel = attr.get("rel", "").lower().split()
+            href = attr.get("href", "").strip()
+            if not href:
+                return
+            if "apple-touch-icon" in rel or "apple-touch-icon-precomposed" in rel:
+                found.append((0, 180, href))
+            elif "icon" in rel:              # "icon" as well as "shortcut icon"
+                size = 16
+                sizes = attr.get("sizes", "").lower()
+                vector = "svg" in attr.get("type", "").lower() \
+                    or href.lower().split("?")[0].endswith(".svg")
+                if sizes == "any" or vector:
+                    size = 256
+                for token in sizes.split():
+                    width = token.split("x")[0]
+                    if width.isdigit():
+                        size = max(size, int(width))
+                found.append((1 if size >= 48 else 2, size, href))
+
+    try:
+        Links().feed(html)
+    except Exception:
+        pass
+    # The touch icon first: it is opaque and drawn to sit on a tile, exactly
+    # what a button is. Then whatever stays sharp at button size, the largest
+    # first; the 16 px ones only when a page has nothing else.
+    found.sort(key=lambda item: (item[0], -item[1]))
+    return [href for _preference, _size, href in found]
+
+
+def download(url: str, limit: int) -> "tuple[bytes, str, str]":
+    """(body, the URL after redirects, content type), at most `limit` bytes."""
+    from urllib.request import Request, urlopen
+
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("only http and https")
+    request = Request(url, headers={"User-Agent": FAVICON_AGENT, "Accept": "*/*"})
+    with urlopen(request, timeout=FAVICON_TIMEOUT) as response:
+        return response.read(limit), response.geturl(), response.headers.get_content_type()
+
+
+def data_uri_bytes(href: str) -> bytes:
+    import base64
+    from urllib.parse import unquote_to_bytes
+
+    header, _, payload = href.partition(",")
+    if ";base64" in header.lower():
+        return base64.b64decode(payload)
+    return unquote_to_bytes(payload)
+
+
+def load_image(data: bytes):
+    loader = GdkPixbuf.PixbufLoader()
+    if b"<svg" in data[:4096].lower():
+        # A vector renders at whatever size it declares - often 16 or 32 -
+        # so ask for the size it will be shown at instead.
+        def prepared(ld, width, height):
+            if width > 0 and height > 0:
+                factor = FAVICON_SIZE / max(width, height)
+                ld.set_size(max(1, round(width * factor)), max(1, round(height * factor)))
+        loader.connect("size-prepared", prepared)
+    try:
+        loader.write(data)
+        loader.close()
+    except Exception:
+        return None
+    return loader.get_pixbuf()
+
+
+def decode_image(data: bytes):
+    """A pixbuf from whatever arrived - PNG, ICO, SVG, JPEG - or None.
+
+    Since Vista an .ico usually carries PNGs inside, which the ICO loader of
+    GdkPixbuf does not read - claude.ai's is one of them. The largest PNG is
+    taken out and decoded on its own; old bitmap icons go to the loader.
+    """
+    if data[:4] == b"\x00\x00\x01\x00" and len(data) > 6:
+        best = None
+        for i in range(int.from_bytes(data[4:6], "little")):
+            entry = data[6 + 16 * i:22 + 16 * i]
+            if len(entry) < 16:
+                break
+            width = entry[0] or 256
+            size = int.from_bytes(entry[8:12], "little")
+            offset = int.from_bytes(entry[12:16], "little")
+            chunk = data[offset:offset + size]
+            if chunk[:8] == b"\x89PNG\r\n\x1a\n" and (best is None or width > best[0]):
+                best = (width, chunk)
+        if best is not None:
+            pixbuf = load_image(best[1])
+            if pixbuf is not None:
+                return pixbuf
+    return load_image(data)
+
+
+def on_light_tile(pixbuf):
+    """Put a dark icon with see-through parts on a light, rounded tile.
+
+    Plenty of favicons are a black logo on nothing - made for white browser
+    tabs and invisible on a dark wheel (GitHub's octocat, for one). Browsers
+    put them on a light tile on their new-tab pages; so does this. Light or
+    opaque icons are left alone.
+    """
+    if cairo is None or not pixbuf.get_has_alpha() or pixbuf.get_n_channels() < 4:
+        return pixbuf
+    width, height = pixbuf.get_width(), pixbuf.get_height()
+    pixels, stride = pixbuf.get_pixels(), pixbuf.get_rowstride()
+    seen = clear = 0
+    light = 0.0
+    for y in range(0, height, 2):
+        for x in range(0, width, 2):
+            i = y * stride + x * 4
+            if pixels[i + 3] < 40:
+                clear += 1
+                continue
+            seen += 1
+            light += 0.2126 * pixels[i] + 0.7152 * pixels[i + 1] + 0.0722 * pixels[i + 2]
+    if not seen or clear < (seen + clear) * 0.15 or light / seen / 255 > 0.45:
+        return pixbuf
+    size = FAVICON_SIZE
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    cr = cairo.Context(surface)
+    rounded_rect_path(cr, 0, 0, size, size, size * 0.22)
+    cr.set_source_rgb(0.95, 0.95, 0.94)
+    cr.fill()
+    factor = size * 0.70 / max(width, height)
+    cr.translate((size - width * factor) / 2, (size - height * factor) / 2)
+    cr.scale(factor, factor)
+    Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0)
+    cr.paint()
+    surface.flush()
+    return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+
+
+def fetch_favicon(url: str) -> str:
+    """Download a website's icon into the user's icon folder.
+
+    Returns the path the way the configuration stores it, or "" when the
+    site gave nothing usable. It blocks - the wheel runs it in a thread.
+    """
+    target = favicon_file(url)
+    if target is None or not load_gtk() or GdkPixbuf is None:
+        return ""
+    if target.is_file():
+        return config_relative(target)
+    from urllib.parse import urljoin, urlparse
+
+    base, candidates = url, []
+    try:
+        body, base, kind = download(url, FAVICON_PAGE_LIMIT)
+        if "html" in kind:
+            candidates = favicon_links(body.decode("utf-8", "replace"))
+    except Exception:
+        pass                    # no page - /favicon.ico may still be there
+    root = urlparse(base)
+    candidates.append(f"{root.scheme}://{root.netloc}/favicon.ico")
+
+    for href in candidates:
+        try:
+            if href.startswith("data:"):
+                data = data_uri_bytes(href)
+            else:
+                data, _final, _kind = download(urljoin(base, href), FAVICON_FILE_LIMIT)
+        except Exception:
+            continue
+        # Only what really decodes counts: a 404 page is not an icon.
+        pixbuf = decode_image(data)
+        if pixbuf is None or min(pixbuf.get_width(), pixbuf.get_height()) < 8:
+            continue
+        largest = max(pixbuf.get_width(), pixbuf.get_height())
+        if largest > FAVICON_SIZE:
+            factor = FAVICON_SIZE / largest
+            pixbuf = pixbuf.scale_simple(max(1, round(pixbuf.get_width() * factor)),
+                                         max(1, round(pixbuf.get_height() * factor)),
+                                         GdkPixbuf.InterpType.HYPER)
+        pixbuf = on_light_tile(pixbuf)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + ".part")
+            pixbuf.savev(str(partial), "png", [], [])
+            os.replace(partial, target)
+        except Exception:
+            return ""
+        return config_relative(target)
+    return ""
+
+
 class Choice:
     """One row of the icon search: a drawn icon, or an application's own."""
 
-    __slots__ = ("name", "comment", "icon", "icon_name")
+    __slots__ = ("name", "comment", "icon", "icon_name", "original")
 
-    def __init__(self, name: str, comment: str, icon: str, icon_name: str = "") -> None:
+    def __init__(self, name: str, comment: str, icon: str, icon_name: str = "",
+                 original: bool = False) -> None:
         self.name = name
         self.comment = comment
         self.icon = icon
         self.icon_name = icon_name
+        self.original = original         # "use the original icon", not a pick
 
 
 def icon_choices(query: str, apps: list) -> list:
@@ -1263,8 +1535,9 @@ def command_choices(typed: str, has_apps: bool) -> "tuple[list, str]":
     if URL_PATTERN.match(text):
         url = text if "://" in text else f"https://{text}"
         browser = app_for_desktop_id(default_handler("browser"))
+        icon = cached_favicon(url) or (browser.icon_name if browser else "")
         return [CommandChoice(url, tr("cmd_url_hint"), url_label(url), f"@browser {url}",
-                              "globe", browser.icon_name if browser else "")], ""
+                              "globe", icon)], ""
     # A single word that finds applications is an application search; with
     # arguments, or with nothing found, it may well be a command.
     if " " not in text and has_apps:
@@ -2459,6 +2732,10 @@ class RadialMenu:
         self.origin = (0, 0)
         self.original = ""              # the original icon of the slot being edited
         self.search_note = ""           # why a typed command got no row
+        self.original_url = ""          # the address, when the slot is a website
+        self.pending_icons: set = set() # buttons whose favicon is on its way
+        self.flash_text = ""            # a word in place of the key hints
+        self.flash_until: float | None = None
 
     # -- time ---------------------------------------------------------------
 
@@ -2686,14 +2963,17 @@ class RadialMenu:
                 if subtitle:
                     draw_text(cr, subtitle, cx, line, 13.0, False,
                               (*skin.text[:3], 0.78 * fade_in), max_width=620)
-        if self.search_slot >= 0:
+        hint_rgba = (*skin.text_dim[:3], 0.65 * fade_in)
+        if self.flash_text and (self.flash_until is None or now < self.flash_until):
+            hint, hint_rgba = self.flash_text, (*skin.accent[:3], 0.95 * fade_in)
+        elif self.search_slot >= 0:
             hint = tr("hint_icon") if self.search_mode == "icon" else tr("hint_search")
         elif self.edit:
             hint = tr("hint_edit")
         else:
             hint = tr("hint_radial")
         draw_text(cr, hint, cx, min(cy + radius + button + 104, height - 22), 11.5, False,
-                  (*skin.text_dim[:3], 0.65 * fade_in), max_width=820)
+                  hint_rgba, max_width=820)
         return False
 
     def draw_items(self, cr, cx, cy, radius, button, count, fade_in, dt) -> None:
@@ -2738,7 +3018,7 @@ class RadialMenu:
         skin = self.skin
         action = self.actions[index]
         empty = not str(action.get("command", "")).strip()
-        filling = index == self.search_slot
+        filling = index == self.search_slot or id(action) in self.pending_icons
 
         if filling:
             # The button waiting for an application - or for an icon - breathes.
@@ -2801,7 +3081,8 @@ class RadialMenu:
             self.draw_badge(cr, x + radius * 0.74, y - radius * 0.74, number, skin.accent, alpha)
 
         label = str(action.get("label") or "")
-        if filling and self.search_mode == "icon" and self.original:
+        if (filling and self.search_mode == "icon"
+                and (self.original or self.original_url)):
             label = tr("use_original_icon")
         elif empty and not label:
             label = tr("slot_empty")
@@ -3319,8 +3600,15 @@ class RadialMenu:
         self.search_mode = mode
         self.search_at = time.monotonic()
         # Worked out once, up front: the icon search offers it as its first
-        # row, and the button only promises it when there is one to give.
-        self.original = original_icon(self.actions[index]) if mode == "icon" else ""
+        # row, and the button only promises it when there is one to give. A
+        # website's original is its favicon - known once it has been fetched,
+        # fetched only when asked for.
+        action = self.actions[index]
+        self.original_url = browser_url(action.get("command", "")) if mode == "icon" else ""
+        if self.original_url:
+            self.original = cached_favicon(self.original_url)
+        else:
+            self.original = original_icon(action) if mode == "icon" else ""
         self.search_text = ""
         self.search_index = 0
         if self.apps is None:
@@ -3337,6 +3625,7 @@ class RadialMenu:
 
     def close_search(self) -> None:
         self.original = ""
+        self.original_url = ""
         self.search_note = ""
         self.search_slot = -1
         self.search_at = None
@@ -3349,11 +3638,17 @@ class RadialMenu:
         if self.search_mode == "icon":
             hits = icon_choices(query, self.apps or [])
             label = tr("use_original_icon")
-            if self.original and (not query or query in label.lower()
-                                  or query in self.original.lower()):
+            asked = (not query or query in label.lower()
+                     or query in self.original.lower() or query in self.original_url.lower())
+            if (self.original or self.original_url) and asked:
                 action = self.actions[self.search_slot]
-                hits.insert(0, Choice(label, tr("icon_original_hint"),
-                                      icon_for(action), self.original))
+                if self.original:
+                    hits.insert(0, Choice(label, tr("icon_original_hint"), icon_for(action),
+                                          self.original, original=True))
+                else:           # a website whose icon has not been fetched yet
+                    hits.insert(0, Choice(label, tr("icon_favicon_hint",
+                                                    host=url_host(self.original_url)),
+                                          "globe", "", original=True))
             self.search_hits = hits[:self.MAX_HITS]
         else:
             scored = []
@@ -3374,6 +3669,9 @@ class RadialMenu:
         if not self.search_hits or self.search_slot < 0:
             return
         hit = self.search_hits[min(self.search_index, len(self.search_hits) - 1)]
+        if self.search_mode == "icon" and getattr(hit, "original", False):
+            self.use_original_icon()          # the same as clicking the button
+            return
         index = self.search_slot
         mode = self.search_mode
         self.close_search()
@@ -3411,7 +3709,12 @@ class RadialMenu:
         """
         index = self.search_slot
         action = self.actions[index]
-        name = self.original or original_icon(action)
+        url = self.original_url or browser_url(action.get("command", ""))
+        if url and not cached_favicon(url):
+            self.close_search()
+            self.fetch_favicon_async(action, url)
+            return
+        name = (cached_favicon(url) if url else "") or self.original or original_icon(action)
         self.close_search()
         if not name:
             self.sound.play("error")
@@ -3420,6 +3723,54 @@ class RadialMenu:
         action["icon_source"] = "app"
         self.sound.play("toggle-show")
         self.save()
+
+    def fetch_favicon_async(self, action: dict, url: str) -> None:
+        """Fetch a website's icon without holding up the wheel.
+
+        The download runs in a thread; the button keeps pulsing and the hint
+        line says what is going on until the icon lands on the main loop.
+        """
+        import threading
+
+        self.pending_icons.add(id(action))
+        self.flash(tr("favicon_loading", host=url_host(url)), seconds=None)
+        self.sound.play("toggle-show")
+
+        def work() -> None:
+            path = fetch_favicon(url)
+            GLib.idle_add(self.favicon_arrived, action, url, path)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def favicon_arrived(self, action: dict, url: str, path: str) -> bool:
+        self.pending_icons.discard(id(action))
+        if not any(entry is action for entry in self.actions):
+            self.flash("")
+            return False                      # removed while it was loading
+        if path:
+            action["app_icon"] = path
+            action["icon_source"] = "app"
+            self.flash("")
+            self.sound.play("toggle-show")
+        else:
+            # Nothing usable at the site: the browser that opens it is the next
+            # best original - and the hint line says why that is what appeared.
+            fallback = original_icon(action)
+            if fallback:
+                action["app_icon"] = fallback
+                action["icon_source"] = "app"
+            self.flash(tr("favicon_failed", host=url_host(url)), seconds=4.0)
+            self.sound.play("error")
+        self.resolved.pop(id(action), None)
+        self.save()
+        if self.area is not None:
+            self.area.queue_draw()
+        return False
+
+    def flash(self, text: str, seconds: "float | None" = 3.0) -> None:
+        """A short message in place of the key hints; seconds=None holds it."""
+        self.flash_text = text
+        self.flash_until = None if seconds is None else time.monotonic() + seconds
 
     def finish_drag(self) -> None:
         target = self.drop_slot()
